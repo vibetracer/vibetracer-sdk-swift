@@ -73,6 +73,18 @@ See [skills/](skills/) for the full reference pack the AI uses.
 
 Sign up at [vibetracer.xyz](https://vibetracer.xyz) to create a project and get your API key. Events appear within seconds.
 
+## Contributing
+
+One-time setup (per clone) to activate the pre-commit hooks:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hooks enforce the invariants the skill update-notifier feature depends on:
+edited `SKILL.md` files must bump their `version: YYYY-MM-DD` frontmatter to
+today's date, so agents running the update check notice the change.
+
 ## License
 
 MIT. Copyright (c) 2026 Vibe Tracer.

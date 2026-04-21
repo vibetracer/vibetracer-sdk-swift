@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Pre-commit hook runner — chains the checks this repo expects.
+#
+# Activate in a fresh clone with:
+#   git config core.hooksPath .githooks
+#
+# `core.hooksPath` is per-clone, not repo-global, so every contributor
+# must opt in once. See README for the one-time setup.
+
+set -e
+
+bash scripts/check-version-bump.sh
