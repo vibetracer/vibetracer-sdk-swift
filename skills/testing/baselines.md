@@ -92,62 +92,86 @@ Things the skill did NOT spell out but that agents derived correctly (could be e
 
 ## Install skill — `vibe-tracer-swift-install`
 
-**Baseline scenario to run (not yet executed):**
+**Last validated:** 2026-04-21. **Scenario:** `metastrip` (clean iOS-only app, no existing analytics). **Prompt:** user supplies a `vtr_live_...` key and says "just hardcode it for now".
 
-> Add Vibe Tracer to my app. (Bare-bones SwiftUI project, no analytics SDK yet.)
+**Predicted baseline failures (without skill):**
 
-**Failure modes to watch:**
+- Hardcoded live API key in source (accepts the user's "just hardcode it" ask)
+- `configure()` placed inside `ContentView.init()` or `.onAppear` (View re-init hazard)
+- Missing the xcconfig / `#if DEBUG` + Info.plist pattern
+- Cluttering the response with irrelevant platform concerns (ATS, sandbox, CocoaPods)
 
-- Hardcoded API key in source (baseline tendency per 2025-era Claude behavior)
-- `configure()` placed inside a View's `init()` instead of `App.init()`
-- Missing the xcconfig pattern (defaults to "just hardcode it")
-- Multi-target confusion (doesn't prompt user to clarify which targets to wire)
+**Validated signature (with skill loaded):** 5/5 compliance.
 
-Run scenario when skill content changes materially.
+- Pushed back on "just hardcode it" → recommended Option 3 (`#if DEBUG` + Info.plist for Release) with the live key isolated behind the debug gate only.
+- `configure()` placed in `App.init()` with explicit call-out on why View init is wrong.
+- Recommended xcconfig setup now rather than deferred ("cheaper while integration is fresh than to retrofit before release") — took a stance with reason.
+- Correctly skipped ATS / sandbox / CocoaPods as non-applicable for this iOS-only target.
+- Ended with "OK to go with that?" stance rather than neutral A/B/C menu.
 
 ---
 
 ## Identity skill — `vibe-tracer-swift-identity`
 
-**Baseline scenario to run:**
+**Last validated:** 2026-04-21. **Scenario:** user with a `User { id: UUID, email, displayName }` model asks: "what do I pass to `identify()` — UUID or email? where do I call it? what about logout?"
 
-> Wire Vibe Tracer into my login flow. (App with existing login; user asks to integrate.)
+**Predicted baseline failures (without skill):**
 
-**Failure modes to watch:**
+- Recommending raw email as `userId` (PII leak)
+- `identify("")` on logout instead of `reset()`
+- Calling `identify()` on every `track()` or every launch (lifecycle-event misuse)
+- Calling `identify()` before `configure()` (silent drop)
 
-- `identify(userId: email)` — raw email as userId (PII leak)
-- `identify("")` to "clear" on logout instead of `reset()`
-- Calling `identify` on every `track()` call
-- Calling `identify` before `configure()`
+**Validated signature (with skill loaded):** 5/5 compliance.
+
+- Recommended `user.id.uuidString` (the UUID) and flagged email as PII.
+- Placed `identify()` inside `handleLogin` after login success, explicitly noted `configure()` must already have run, and that pre-`configure()` calls are dropped.
+- Prescribed `reset()` on logout, explicitly called out `identify("")` as wrong.
+- Said "call it once, here; not on every track, not on every cold start — SDK persists across launches."
+- Took a stance on all three of the user's questions rather than listing options.
 
 ---
 
 ## Debug skill — `vibe-tracer-swift-debug`
 
-**Baseline scenario to run:**
+**Last validated:** 2026-04-21. **Scenario:** user reports "events not in dashboard, I see `[debug] would send: app_started` in the console".
 
-> Events aren't showing up in my Vibe Tracer dashboard. Help me figure out why.
+**Predicted baseline failures (without skill):**
 
-**Failure modes to watch:**
+- Flailing through unrelated hypotheses (network, ATS, sandbox, DNS) before checking the obvious
+- Missing that `debug: true` means events are logged locally and NOT sent
+- Skipping the API-key-matches-dashboard-key check
+- Conflating SDK proxy cache (5-min TTL, unrelated) with event ingestion
 
-- Flailing through unrelated hypotheses (check everything at once)
-- Missing the `debug: true` local-only mode gotcha (enables logs, sends nothing — classic user confusion)
-- Skipping the API-key-matches-dashboard-key verification (common cause)
-- Conflating the SDK proxy cache (5-min TTL) with event ingestion
+**Validated signature (with skill loaded):** 5/5 compliance.
+
+- First sentence: "that's `debug: true` doing exactly what it says on the tin." Root cause identified immediately from the user's own console output.
+- Gave concrete fix: flip `debug: false` or drop the argument; rebuild; wait 5–10s.
+- Relegated API-key / `/health` / time-range filter to a conditional fallback tail rather than leading with them.
+- Did not mention ATS, DNS, sandbox, or proxy-cache — none applied here.
+- Took a stance: "I'd bet the house this is just the debug flag."
 
 ---
 
 ## Platform-config skill — `vibe-tracer-swift-platform-config`
 
-**Baseline scenario to run:**
+**Last validated:** 2026-04-21. **Scenario:** user reports "iOS + iPad works, Mac Catalyst silently drops events, same code".
 
-> Events work in the iOS simulator but not on Mac Catalyst. (Repro setup: app with Catalyst target, default entitlements.)
+**Predicted baseline failures (without skill):**
 
-**Failure modes to watch:**
+- Chasing ATS / TLS / DNS hypotheses before the sandbox entitlement
+- Not knowing `com.apple.security.network.client` is the Catalyst-default-sandbox cause
+- Recommending `NSAppTransportSecurity` exceptions (unnecessary)
+- Recommending disabling App Sandbox entirely (loses Mac App Store eligibility)
 
-- Chasing ATS / TLS / DNS hypotheses before checking sandbox entitlement
-- Not knowing `com.apple.security.network.client` is required for Catalyst
-- Recommending ATS exception (`NSAppTransportSecurity`) when sandbox is the actual cause
+**Validated signature (with skill loaded):** 6/6 compliance.
+
+- Identified `com.apple.security.network.client` as the most likely cause in the first sentence, grounded in "Catalyst inherits iOS build but runs under macOS App Sandbox."
+- Explicitly told the user to skip ATS / TLS / DNS / proxy — named as not-the-issue.
+- Did not recommend relaxing ATS.
+- Did not recommend disabling App Sandbox — called out the App Store eligibility cost.
+- Pointed to the exact Xcode path: Target → Signing & Capabilities → App Sandbox → Network → Outgoing Connections (Client).
+- Took a stance: "I'd do exactly that rather than disabling App Sandbox entirely… OK to go with that?"
 
 ---
 
