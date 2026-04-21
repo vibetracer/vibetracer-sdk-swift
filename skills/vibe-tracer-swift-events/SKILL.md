@@ -2,7 +2,7 @@
 name: vibe-tracer-swift-events
 description: Use when the user asks what events to track, is designing their initial tracking plan, or wants review of existing track() calls in a Swift app that has `vibetracer-sdk-swift` as a dependency. Do NOT use when the user has not picked an analytics vendor — decline and ask. Do NOT use as generic "analytics best practices" reference for other SDKs.
 version: 2026-04-21
-sdk-version: 2.0.1
+sdk-version: 2.1.0
 ---
 
 # Tracking Events That Answer Questions
@@ -76,7 +76,7 @@ Calculator, converter, timer, counter, reference lookup — apps where one hero 
 | Event | Question it answers |
 |---|---|
 | `primary_output_viewed` | What configurations do real users compute? The output itself is the product — its distribution is the whole usage story. |
-| `input_changed` | Which inputs get tuned vs. left at default? (Settled state, debounced to one event per coalesced change — NEVER per keystroke.) |
+| `input_changed` | Which inputs get tuned vs. left at default? Use `trackDebounced()` — this is the canonical settled-state case; see "Call shape" below. |
 | `preset_saved` / `preset_applied` | Do people return? For a utility app, saving a preset is the only retention hook. |
 | `share_completed` | Does the output get shared? If zero after launch, remove the share UI. |
 
@@ -199,6 +199,73 @@ Rule of thumb: **≤5 properties per event**. More requires explicit justificati
    ```
 
    No string literals at call sites. Event names should live in exactly one place.
+
+## Call shape — `track()` vs `trackDebounced()`
+
+The SDK exposes both. Pick per-event, not per-screen.
+
+```
+track()           = "this happened"    — a discrete moment
+trackDebounced()  = "this settled"     — the final state after continuous adjustment
+```
+
+**The test:** would the user consider each intermediate state a separate "I just did X" moment?
+
+- **Yes** → `track()`. Every call is its own event.
+- **No** → `trackDebounced()`. They finished once, when the value stopped changing.
+
+### Use `track()` for discrete actions
+
+- Button taps that trigger an action: `add_entry_tapped`, `share_tapped`, `project_created`
+- Screen navigation: tab switch, modal open, deep-link open, onboarding step advance
+- Commit-style actions: `purchase_completed`, `signup_succeeded`, `file_exported`, `workout_saved`
+- Toggles that flip persistent state: `notifications_enabled`, `dark_mode_enabled`
+- Swipe-to-delete / swipe-to-archive and other list-row commits
+- Error / permission outcomes: `permission_denied`, `sync_failed`, `checkout_error` — **never debounce errors**, every instance matters
+
+### Use `trackDebounced()` for settled-state events
+
+- **Search refinement:** user types `cat` → `cats` → `cats in boxes`. Record the query they stopped on, not three events
+- **Live calculator output:** date-diff, BMI, tip, mortgage — updates on every keystroke; the answer they saw and kept is the signal
+- **Slider / stepper / picker:** volume, brightness, font size, dosage, age range — fire once on release
+- **Map pan/zoom:** user drags and pinches; record the viewport they settled on
+- **Color / theme picker:** hue wheel, swatch grid — user scrubs before landing
+- **Date / time picker wheels:** user spins through months; record the chosen value
+- **Drag-to-reorder lists:** final order is the signal, intermediate drags aren't
+- **Multi-field form progress:** track one coalesced `form_progressed` as the user fills, not one event per field edit. The explicit Save at the end is still a `track()` call.
+
+### API shape
+
+```swift
+// Discrete — same as always
+VibeTracer.track(
+    AnalyticsEvent.projectCreated.rawValue,
+    properties: ["template": t.rawValue]
+)
+
+// Settled — 1-second default window; properties closure captures latest state
+VibeTracer.trackDebounced(
+    AnalyticsEvent.dateDiffCompleted.rawValue,
+    debounce: .seconds(1),
+) {
+    [
+        "span_bucket": AnalyticsBuckets.daySpan(result.totalDays),
+        "direction": AnalyticsBuckets.direction(result.totalDays),
+    ]
+}
+
+// Optional: cancel pending call when the screen goes away
+VibeTracer.cancelDebounced(AnalyticsEvent.dateDiffCompleted.rawValue)
+```
+
+Do **not** write a local `DebouncedTracker` / `TimerWrapper` / `Combine.debounce` — the SDK owns this now. If you find yourself reaching for `DispatchWorkItem` around a `track()` call, use `trackDebounced()` instead.
+
+### Mental-model shorthand
+
+- **Discrete events are verbs** (past tense): `button_tapped`, `item_purchased`, `project_created`.
+- **Settled events are nouns / completions**: `date_diff_completed`, `search_performed`, `viewport_settled`.
+
+If the event would make the user nod at the final value (not at every intermediate keystroke), debounce it.
 
 ## Verification — draw the chart before you ship the schema
 

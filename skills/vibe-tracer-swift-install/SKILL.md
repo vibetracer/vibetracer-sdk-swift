@@ -2,7 +2,7 @@
 name: vibe-tracer-swift-install
 description: Use when the user explicitly asks to integrate, install, or configure Vibe Tracer in a Swift app, OR when `vibetracer-sdk-swift` is being added to their Package.swift or Podfile for the first time. Do NOT use for generic "add analytics" requests when the user has not picked a vendor.
 version: 2026-04-21
-sdk-version: 2.0.1
+sdk-version: 2.1.0
 ---
 
 # Installing Vibe Tracer in a Swift App
@@ -35,6 +35,8 @@ Do not announce a "plan" and wait for confirmation. Do not list alternatives. As
 ## Getting the API key
 
 Format: `vtr_live_` followed by 32 hex chars. They get one at `https://vibetracer.xyz/projects/<slug>/settings` → API keys → Create. Shown exactly once at creation; have them paste it to you directly.
+
+If the user's opening prompt includes a phrase like "my project slug is X" (the dashboard's install one-liner forwards it for this reason), substitute `<slug>` with that value when you quote the URL — don't ask them to fill it in themselves. If no slug is in the prompt, leave the `<slug>` placeholder literal and let the user paste the correct URL back.
 
 ## Red flags — STOP if you're about to write any of these
 
@@ -159,21 +161,21 @@ The Xcode SPM case is handled by `wire-xcode.rb` above — you should not be in 
 - The user has a pure `Package.swift` project (no `.xcodeproj`) — in which case the script doesn't apply.
 - The user insists on CocoaPods for an existing Podfile-based project.
 
-**Version pinning in all cases:** use the `sdk-version` value from this skill's frontmatter (currently `2.0.1` — but read the frontmatter, don't trust this sentence which may be stale). Never hardcode a different version.
+**Version pinning in all cases:** use the `sdk-version` value from this skill's frontmatter (currently `2.1.0` — but read the frontmatter, don't trust this sentence which may be stale). Never hardcode a different version.
 
 ### Swift Package Manager (`Package.swift`)
 
 ```swift
 .package(url: "https://github.com/vibetracer/vibetracer-sdk-swift", from: "<sdk-version>")
 ```
-Substitute `<sdk-version>` with the frontmatter value — e.g. `from: "2.0.1"`. Add `"VibeTracer"` to the target's `dependencies`.
+Substitute `<sdk-version>` with the frontmatter value — e.g. `from: "2.1.0"`. Add `"VibeTracer"` to the target's `dependencies`.
 
 ### CocoaPods
 
 ```
 pod 'VibeTracer', '~> <major>.<minor>'
 ```
-Substitute `<major>.<minor>` with the first two segments of `sdk-version` — e.g. with `sdk-version: 2.0.1`, write `'~> 2.0'` (up-to-next-major semantics, matching the SPM `from:` behavior).
+Substitute `<major>.<minor>` with the first two segments of `sdk-version` — e.g. with `sdk-version: 2.1.0`, write `'~> 2.0'` (up-to-next-major semantics, matching the SPM `from:` behavior).
 
 ### Gitee mirror (China)
 
@@ -221,11 +223,13 @@ Every target that runs Swift code needs its own `configure()` call in its own en
 
 Almost never applies — this SDK targets iOS / macOS / Catalyst / tvOS / visionOS apps, which are Xcode projects by construction. If you're in an SPM-only executable (Swift Playgrounds, a CLI tool), read the key from `ProcessInfo.processInfo.environment["VIBETRACER_API_KEY"]` and set the env var in the scheme. Do not present this as an option the user picks — it's a structural fallback, used only when xcconfig is physically impossible.
 
-## Public API — exactly 8 symbols
+## Public API — exactly 10 symbols
 
 ```swift
 VibeTracer.configure(apiKey: String, endpoint: URL = defaultEndpoint, debug: Bool = false)
 VibeTracer.track(_ event: String, properties: [String: Any]? = nil)
+VibeTracer.trackDebounced(_ event: String, key: String = "", debounce: TimeInterval = 1.0, properties: @escaping () -> [String: Any]?)
+VibeTracer.cancelDebounced(_ event: String, key: String = "")
 VibeTracer.identify(userId: String)
 VibeTracer.reset()
 VibeTracer.flush() async
@@ -233,6 +237,8 @@ VibeTracer.disable()
 VibeTracer.enable()
 VibeTracer.version
 ```
+
+`trackDebounced` / `cancelDebounced` are for settled-state events (calculator outputs, search refinement, slider drags). See the events skill's "Call shape" section for when to reach for them.
 
 ## Take a stance — but only when there's a genuine choice
 

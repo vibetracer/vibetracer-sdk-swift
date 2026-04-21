@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.1.0] - 2026-04-22
+
+### Added
+
+- **`VibeTracer.trackDebounced(event, key:, debounce:, properties:)`** for
+  settled-state events — calculator outputs, search refinement, slider drags,
+  map pan/zoom, date-picker wheels, drag-to-reorder, multi-field form progress.
+  Rapid-fire calls for the same `(event, key)` coalesce to a single event
+  emitted after the debounce window elapses; the `properties` closure is
+  evaluated at fire time so it captures the latest state. Default window: 1s.
+- **`VibeTracer.cancelDebounced(event, key:)`** for `.onDisappear` — cancels a
+  pending fire so screen dismiss doesn't race a deferred event.
+- **Events-skill "Call shape" section** — decision guide for `track()` vs
+  `trackDebounced()` with ~15 concrete UI-pattern examples. Replaces the terse
+  "debounced, never per keystroke" note that left the tool choice implicit.
+- **Install-skill Public API list** bumped from 8 → 10 symbols.
+
+### Why
+
+Every agent previously shipped a bespoke `DebouncedTracker` class per app
+because the events skill mandated debounced tracking but the SDK didn't
+provide it. That produced variation in timer strategy, memory lifecycle, key
+scoping, thread safety, and cancellation — all of which should be the SDK's
+job to do correctly once.
+
+### Notes
+
+- No breaking API changes. Existing `track()` call sites are untouched.
+- `sdk-version` frontmatter in all 5 skills bumped to `2.1.0`.
+- Podspec bumped to match; `release.sh` auto-commits future podspec bumps so
+  this stays in sync.
+
 ## [2.0.1] - 2026-04-21
 
 ### Added
