@@ -52,26 +52,4 @@ echo "→ Tagging $TAG"
 git tag -a "$TAG" -m "Release $VERSION"
 git push origin "$TAG"
 
-# Mirror to Gitee if configured
-if git remote get-url gitee >/dev/null 2>&1; then
-  echo "→ Pushing to Gitee mirror"
-  git push gitee main || echo "WARNING: gitee main push failed"
-  git push gitee "$TAG" || echo "WARNING: gitee tag push failed"
-else
-  echo "⚠ gitee remote not configured — skipping (run: git remote add gitee <url>)"
-fi
-
-# CocoaPods trunk push
-if command -v pod >/dev/null 2>&1; then
-  echo "→ Pushing to CocoaPods trunk"
-  pod trunk push VibeTracer.podspec --allow-warnings
-else
-  echo "⚠ cocoapods not installed — skipping trunk push (run: sudo gem install cocoapods)"
-fi
-
-# Bust the backend skill.md proxy cache (5-min TTL otherwise)
-echo "→ Busting skill.md proxy cache"
-curl -sS "https://api.vibetracer.xyz/sdk/swift/skill.md" > /dev/null
-curl -sS "https://api.vibetracer.xyz/sdk/swift/skill.md?ref=$TAG" > /dev/null
-
-echo "✓ Released $TAG to GitHub. Gitee + CocoaPods status above."
+echo "✓ Released $TAG to GitHub."

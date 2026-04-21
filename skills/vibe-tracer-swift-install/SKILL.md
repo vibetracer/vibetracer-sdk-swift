@@ -174,7 +174,7 @@ The Xcode SPM case is handled by `wire-xcode.rb` above — you should not be in 
 - The user has a pure `Package.swift` project (no `.xcodeproj`) — in which case the script doesn't apply.
 - The user insists on CocoaPods for an existing Podfile-based project.
 
-**Version pinning in all cases:** use the `sdk-version` value from this skill's frontmatter (currently `2.1.0` — but read the frontmatter, don't trust this sentence which may be stale). Never hardcode a different version.
+**Version pinning in all cases:** use the `sdk-version` value from this skill's frontmatter. Read the frontmatter directly — do not hardcode a version from memory or from example snippets below.
 
 ### Swift Package Manager (`Package.swift`)
 

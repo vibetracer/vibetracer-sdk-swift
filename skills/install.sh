@@ -226,7 +226,18 @@ for t in "${TARGETS[@]}"; do
     if [ "$t" = "$HOME/.codex/skills" ]; then
       echo "    (also wired ~/.codex/AGENTS.md between vibetracer:* sentinels)"
     fi
+    # SDK version the install skill will pin SPM to. Parsed from the freshly
+    # downloaded install-skill frontmatter so it matches exactly what the
+    # agent will read (`sdk-version:` is the source of truth for the version).
+    # Printed before the agent prompt so the human can see at a glance which
+    # release they just picked up — especially useful when `--version` pins a
+    # non-default ref or when diagnosing "why don't I have $newApi yet".
+    sdk_version=$(awk -F': *' '/^sdk-version:/ {print $2; exit}' "$t/vibe-tracer-swift-install/SKILL.md" 2>/dev/null || true)
     echo ""
+    if [ -n "$sdk_version" ]; then
+      echo "Vibe Tracer Swift SDK version: $sdk_version"
+      echo ""
+    fi
     echo "To get started, tell your AI:"
     # We embed the slug in the agent prompt itself — not a separate "API key
     # URL" line — so the dashboard remains the single source of truth for
