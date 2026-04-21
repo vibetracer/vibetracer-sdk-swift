@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'VibeTracer'
-  s.version          = '1.1.1'
+  s.version          = '1.1.2'
   s.summary          = 'Agent-native analytics SDK for Apple platforms.'
   s.description      = <<-DESC
     Vibe Tracer is the analytics SDK for vibe coders — install via the

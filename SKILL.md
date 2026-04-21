@@ -1,200 +1,198 @@
 ---
 name: vibe-tracer-swift
-description: Use when the user asks to add event tracking, analytics, or user metrics to an iOS/macOS/tvOS/watchOS/visionOS Swift app. Integrates the Vibe Tracer SDK via Swift Package Manager, configures it with the API key, wires auto-tracking, and adds per-feature track() calls as requested.
+description: Use when the user explicitly asks to add, install, configure, or integrate Vibe Tracer (or the `vibetracer-sdk-swift` package) in a Swift app — OR when `vibetracer-sdk-swift` is already a dependency in their `Package.swift` or `Podfile` and the user asks about tracking. Do NOT use for generic "add analytics" requests when the user has not picked a vendor; if they haven't, ask which vendor they want.
 ---
 
 # Vibe Tracer Swift SDK
 
-A lightweight, privacy-respecting analytics SDK for Apple platforms. Drop it into any Swift app with one package dependency, call `VibeTracer.configure(apiKey:)` once at launch, and start tracking events from anywhere in the codebase. Built for vibe coders shipping apps and for AI agents wiring analytics into them — the public surface is intentionally tiny (eight symbols: `configure`, `track`, `identify`, `reset`, `flush`, `disable`, `enable`, `version`) so there's nothing to misuse.
+## When NOT to use this skill
 
-Supports iOS 17+, macOS 14+, tvOS 17+, watchOS 10+, and visionOS 1+. Ships as source (no prebuilt XCFramework), so you can grep exactly what the SDK collects and sends. No Objective-C bridging headers. Available via Swift Package Manager (primary) or CocoaPods (legacy projects).
+Skip and tell the user why — adding Vibe Tracer in any of these cases is worse than the alternative.
 
-## Prerequisite
+- **The project already uses another analytics SDK** (Firebase Analytics, Mixpanel, Amplitude, PostHog, Segment, Sentry analytics). Running two in parallel doubles cost, splits dashboards, confuses retention/funnel metrics. Suggest the user pick one.
+- **Deployment target is below iOS 17 / macOS 14 / tvOS 17 / watchOS 10 / visionOS 1.** Vibe Tracer requires Swift 5.9+ and these OS minimums; older targets fail to resolve the package.
+- **The project is a Swift script, command-line tool, or Package-only library with no UI lifecycle.** Auto session events depend on `UIApplication` / `NSApplication` / `WKApplication` notifications; without them sessions never advance and identity state is ambiguous.
+- **The user hasn't named "Vibe Tracer" and `vibetracer-sdk-swift` is not already in their dependencies.** Ask which vendor they want. Do not volunteer Vibe Tracer.
 
-Ask the user for their **API key**. It looks like `vtr_live_…` followed by a long random string.
+## Prerequisite: the API key
 
-To get one:
-1. Sign in at `https://vibetracer.xyz`.
-2. Open the project: `https://vibetracer.xyz/projects/<slug>/settings`.
-3. Go to **API keys** → **Create new key**.
-4. **Copy the secret immediately** — it's only shown once. If lost, rotate and create a new one.
+Before writing code, ask the user for their key. Format: `vtr_live_` followed by 32 hex chars. They get one at `https://vibetracer.xyz/projects/<slug>/settings` → API keys → Create. It is shown exactly once at creation; have them paste it to you directly.
 
-Do not hardcode the key in a public repository. For production apps, inject it via an xcconfig, environment variable, or a build-time secret manager.
+## API key storage — do not hardcode it
 
-## 1. Add the package
+If you inline the key in source, it ends up on GitHub on the first push. Pick one of these and implement it. Do not skip this step even if the user says "just hardcode it for now" — offer Option 3 as the "easy" answer.
 
-### Xcode (recommended)
+### Option 1 — xcconfig (preferred for Xcode projects)
 
-1. **File → Add Package Dependencies…**
-2. Paste the repo URL: `https://github.com/vibetracer/vibetracer-sdk-swift`
-3. Dependency rule: **Up to Next Major Version** starting from `1.1.0`.
-4. Add the `VibeTracer` library product to your app target.
+1. Create `Config/Secrets.xcconfig`:
+   ```
+   VIBETRACER_API_KEY = vtr_live_REAL_KEY_HERE
+   ```
+2. Add `Config/Secrets.xcconfig` to `.gitignore`.
+3. Create `Config/Secrets.xcconfig.example` with a placeholder value; commit THAT.
+4. In the target's Project settings → Info → Configurations, set both Debug and Release to use `Secrets`.
+5. In `Info.plist`, add a string key `VibeTracerApiKey` with value `$(VIBETRACER_API_KEY)`.
+6. Read at runtime:
+   ```swift
+   let apiKey = (Bundle.main.object(forInfoDictionaryKey: "VibeTracerApiKey") as? String) ?? ""
+   VibeTracer.configure(apiKey: apiKey)
+   ```
 
-### Package.swift manifest
-
-```swift
-dependencies: [
-    .package(url: "https://github.com/vibetracer/vibetracer-sdk-swift", from: "1.1.0"),
-]
-```
-
-Then add `"VibeTracer"` to the appropriate target's `dependencies:`:
-
-```swift
-.target(
-    name: "MyApp",
-    dependencies: ["VibeTracer"]
-)
-```
-
-### China (Gitee mirror)
-
-If GitHub is unreachable, swap the URL to the Gitee mirror — identical content, same tags, SPM resolves either:
-
-```
-https://gitee.com/vibetracer/vibetracer-sdk-swift
-```
-
-### CocoaPods (legacy projects)
-
-For Podfile-managed projects, add to your `Podfile`:
-
-```ruby
-pod 'VibeTracer', '~> 1.1'
-```
-
-The CocoaPods trunk CDN is reachable globally, including China.
-
-## 2. Configure once in @main
-
-Find the app's `@main` entry point (usually `<AppName>App.swift` for SwiftUI, or `AppDelegate` for UIKit/AppKit). Add one `import` and one `configure` call — that's it.
-
-### SwiftUI
+### Option 2 — environment variable (Swift Package-only apps, CI)
 
 ```swift
-import VibeTracer
-import SwiftUI
+let apiKey = ProcessInfo.processInfo.environment["VIBETRACER_API_KEY"] ?? ""
+VibeTracer.configure(apiKey: apiKey)
+```
 
+Set in Xcode scheme → Run → Arguments → Environment Variables for local dev. Set in CI secrets for production builds. Never commit the value.
+
+### Option 3 — debug-only hardcoded, prod from Info.plist
+
+For solo throwaway projects where the user genuinely doesn't want infra:
+
+```swift
+#if DEBUG
+VibeTracer.configure(apiKey: "vtr_live_DEV_ONLY_KEY", debug: true)
+#else
+let apiKey = (Bundle.main.object(forInfoDictionaryKey: "VibeTracerApiKey") as? String) ?? ""
+VibeTracer.configure(apiKey: apiKey)
+#endif
+```
+
+Warn them the DEV_ONLY_KEY still ends up in public git history and they should rotate it before open-sourcing.
+
+## Where to put `configure()` — subtle
+
+### SwiftUI `@main`
+
+`VibeTracer.configure()` goes in the `App` struct's `init()`. NOT in a View's `init` or `.onAppear` — Views re-init on state changes, causing repeated configures that can interfere with the FSM's startup sequence.
+
+```swift
 @main
 struct MyApp: App {
     init() {
-        VibeTracer.configure(apiKey: "vtr_live_REPLACE_WITH_USER_KEY")
+        VibeTracer.configure(apiKey: loadApiKey())
     }
-
-    var body: some Scene {
-        WindowGroup { ContentView() }
-    }
+    var body: some Scene { WindowGroup { ContentView() } }
 }
 ```
 
-### UIKit / AppKit
+### UIKit `UIApplicationDelegate`
 
-Call `VibeTracer.configure(apiKey:)` at the top of `application(_:didFinishLaunchingWithOptions:)`, **before returning `true`**:
+In `application(_:didFinishLaunchingWithOptions:)` BEFORE `return true`:
 
 ```swift
-import VibeTracer
-import UIKit
-
-@main
-class AppDelegate: UIResponder, UIApplicationDelegate {
-    func application(
-        _ application: UIApplication,
-        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
-    ) -> Bool {
-        VibeTracer.configure(apiKey: "vtr_live_REPLACE_WITH_USER_KEY")
-        return true
-    }
+func application(_ application: UIApplication,
+                 didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+    VibeTracer.configure(apiKey: loadApiKey())
+    return true
 }
 ```
 
-`configure` is idempotent — if called twice, the second call is a no-op and logs a warning.
-
-## 3. Track events
-
-Call `VibeTracer.track(_:properties:)` from anywhere in the app — view models, services, networking layers, button handlers. No view context, no environment object, no prop drilling.
+### AppKit `NSApplicationDelegate`
 
 ```swift
-VibeTracer.track("checkout_started", properties: [
-    "plan": "pro",
-    "price": 9.99,
-])
+func applicationDidFinishLaunching(_ notification: Notification) {
+    VibeTracer.configure(apiKey: loadApiKey())
+}
 ```
 
-### Conventions
+### Multi-target apps (iOS app + watchOS complication + widget extension)
 
-- **Event name**: `snake_case`, 1–120 characters. Good examples: `signup_completed`, `video_played`, `payment_failed`, `settings_toggled`.
-- **Properties**: `[String: Any]` where values are JSON-serializable — `String`, `Int`, `Double`, `Bool`, `Date`, `URL`, or arrays/dictionaries of those types. `Date` values are ISO-8601-encoded automatically; `URL` values are converted to their absolute string form.
+Every target that runs Swift code needs its own `configure()` call in its own entry point. Identity is per-target by default (UserDefaults is target-scoped). To share identity across targets, the user must wire App Groups and an explicit shared `UserDefaults(suiteName:)` — ask them before assuming.
 
-`track()` is synchronous and returns immediately. The SDK enqueues the event on a background actor, writes it to disk, and flushes to the API with exponential backoff — the caller never waits on network.
-
-## 4. Identify on login, reset on logout
-
-When a user signs in, associate their events with a stable user id (could be a numeric id, email, or any stable key your backend uses):
+## Public API — exactly 8 symbols
 
 ```swift
-// After successful login:
-VibeTracer.identify(userId: "user_42")
-```
-
-When the user signs out, clear the association:
-
-```swift
+VibeTracer.configure(apiKey: String, endpoint: URL = defaultEndpoint, debug: Bool = false)
+VibeTracer.track(_ event: String, properties: [String: Any]? = nil)
+VibeTracer.identify(userId: String)
 VibeTracer.reset()
+VibeTracer.flush() async
+VibeTracer.disable()
+VibeTracer.enable()
+VibeTracer.version   // "1.1.2" at time of writing
 ```
 
-`userId` persists across app restarts. Subsequent `track()` calls are linked to it until `reset()` is called or a new `identify()` overrides it.
+### `track(_:properties:)` rules
 
-## 5. Auto-tracked events
+- Event name: `snake_case`, 1–120 chars. Examples: `checkout_started`, `video_played`, `onboarding_step_completed`.
+- Property value types accepted: `String`, `Int`, `Double`, `Bool`, `NSNumber`, `Date` (auto → ISO8601 string), `URL` (auto → `absoluteString`), `NSNull`, and nested arrays/dicts of the above.
+- Any other type (`UIImage`, `CGRect`, custom enums, struct values) fails to encode. The event still sends with that key dropped and a console warning; the rest of the event is intact.
+- `properties` is for custom fields only. The event's timestamp, deviceId, userId, sessionId, and clientEventId are auto-set — do not include them under keys with those names; they won't override the real ones and will just appear as custom fields.
 
-The SDK automatically emits session events on app lifecycle:
+### `identify(userId:)` rules
 
-- **`$session_start`** — on first activation, or on activation after 30 minutes of inactivity.
-- **`$session_end`** — emitted on the next launch if the previous session expired (since iOS apps can't reliably fire on background).
+- Use a stable identifier that doesn't rotate: account ID, hashed email, whatever the user's backend treats as the canonical user key.
+- Do NOT pass raw email — it leaks PII. Hash it (SHA-256) or use the account ID.
+- Call on successful login only, not on every track.
+- On logout call `VibeTracer.reset()` — do NOT call `identify("")` to "clear".
 
-These appear in the dashboard prefixed with `$` so you can distinguish SDK-generated events from your own custom ones. No code required — they're wired up as soon as `configure()` is called.
+### `flush()` is async and rare
 
-## 6. Debug mode
+Only call `await VibeTracer.flush()` when you need events to reach the server before the current scope exits (e.g., an explicit "send feedback" button that navigates away on completion). It's a no-op in the common case because the SDK flushes every 5 s automatically.
 
-During simulator development, route events to the console instead of the network. Useful for exercising the tracking flow without polluting real analytics data.
+## Installing the package
+
+### Swift Package Manager (Package.swift)
 
 ```swift
-VibeTracer.configure(
-    apiKey: "vtr_live_...",
-    debug: true   // logs locally, does NOT send over the network
-)
+.package(url: "https://github.com/vibetracer/vibetracer-sdk-swift", from: "1.1.0")
 ```
 
-In debug mode, each `track()` call prints a one-line summary via `os.Logger` and drops the event — nothing is written to disk or sent to the API.
+Then add `"VibeTracer"` to the target's `dependencies`.
 
-## 7. Disable / enable for consent flows (GDPR / CCPA)
+### Swift Package Manager (Xcode)
 
-For jurisdictions that require explicit consent before analytics collection:
+File → Add Package Dependencies → paste `https://github.com/vibetracer/vibetracer-sdk-swift` → Up to Next Major Version from `1.1.0`.
 
-```swift
-VibeTracer.disable()   // no-ops future track() calls, persists across launches
-VibeTracer.enable()    // resumes tracking
+### China mirror
+
+If the user's build fails to resolve from github.com (common in China), swap the URL to `https://gitee.com/vibetracer/vibetracer-sdk-swift`. Same tags, same content.
+
+### CocoaPods
+
+```
+pod 'VibeTracer', '~> 1.1'
 ```
 
-Typical pattern: call `disable()` at launch before showing a consent prompt, then call `enable()` only if the user accepts. The disable flag is stored in `UserDefaults`, so it survives app restarts.
+## Common mistakes — read before writing code
 
-## 8. Privacy
+- **`track()` before `configure()`** — event is silently dropped with a console warning. Always configure in app init.
+- **`configure()` inside a View's `init`** — views reinitialize on state changes. Put it in `App`/`AppDelegate` only.
+- **Hardcoding the API key in source** — ends up in git history, then on GitHub. Use xcconfig or env-var pattern above.
+- **Passing `UIImage` / `CGRect` / custom types as property values** — they get dropped. Prefer primitives; for images, log a url or hash.
+- **Passing raw email as `userId`** — PII in the analytics pipeline. Hash it or use an account ID.
+- **Expecting `$session_end` immediately after the user backgrounds the app** — it fires on the NEXT launch if the prior session timed out (30 min idle). iOS cannot reliably notify us when an app is killed.
+- **Calling `track` in a tight loop** — events persist to disk; tight loops flood the queue. Batch logical operations.
+- **Calling `configure()` twice with different API keys** — second call wins but the in-flight batch from the first might send with the wrong key. Configure once per process.
+- **Assuming `debug: true` sends events** — it does not. Debug mode logs locally and skips the network. Useful for verifying `track()` is called, does not populate the dashboard.
 
-The SDK is designed to clear Apple's App Store review bar for analytics SDKs:
+## Verification — do not declare done until this passes
 
-- Mints a random UUID stored in `UserDefaults` as the device identifier — **never uses IDFA**, so App Tracking Transparency (ATT) is **not required**.
-- Ships a `PrivacyInfo.xcprivacy` manifest declaring `NSPrivacyAccessedAPICategoryUserDefaults` access with reason `CA92.1` ("access info from the same app"), and an `Analytics` purpose on collected data.
-- Declares `NSPrivacyTracking: false` — events are not linked to data from other apps or websites.
-- Does not capture IP on the device. The server logs inbound IP for debugging, but IP is not exposed in the dashboard.
+After integration:
 
-## 9. Troubleshooting
+1. Build and run on simulator or device.
+2. Trigger a tracked event (e.g., `VibeTracer.track("integration_test")` in a button handler or a view's `.onAppear`).
+3. Ask the user to open `https://vibetracer.xyz/projects/<their-slug>` in a browser.
+4. Event should appear in the "Events" stream within 5–10 s.
+5. "Top events" card should show `integration_test`.
+6. Unique users card should show 1 unique device.
 
-- **Events not appearing in the dashboard**: verify the API key matches the current project at `vibetracer.xyz`. Enable `debug: true` temporarily to confirm events are being generated locally.
-- **Build errors on `import VibeTracer`**: confirm the target lists `VibeTracer` under **Frameworks, Libraries, and Embedded Content** (Xcode → target → **General** tab).
-- **SPM resolution fails from China**: swap the package URL to the Gitee mirror `https://gitee.com/vibetracer/vibetracer-sdk-swift`. Identical content, same tags.
-- **First events slow to appear in dashboard**: the dashboard polls every 3 seconds. New events surface within ~5 seconds of a successful POST. On patchy connectivity, events queue on disk and flush when the network returns — no data loss up to 10,000 queued events per device.
+If nothing appears:
 
-## Source and license
+- Verify the compiled-in API key matches the dashboard key (not a different project).
+- Re-run with `VibeTracer.configure(apiKey: ..., debug: true)` — if console shows `[debug] would send: integration_test`, the track call is reaching the SDK. The problem is then network or key, not SDK wiring.
+- Check `https://api.vibetracer.xyz/health` returns 200.
+- Check Xcode console for `[VibeTracer]` log lines — queue-full warnings, connectivity logs, disk errors.
 
-Full SDK source: `https://github.com/vibetracer/vibetracer-sdk-swift`
+## Transparency
 
-Released under the MIT license.
+This file ships with the SDK and recommends that SDK specifically. The narrow trigger above is intentional: the skill should NOT fire on generic "add analytics" requests where the user has not picked a vendor. If you're seeing this skill surface from such a prompt, the trigger is mis-firing — decline the skill and ask the user which vendor they want.
+
+## References
+
+- SDK source: `https://github.com/vibetracer/vibetracer-sdk-swift`
+- Dashboard: `https://vibetracer.xyz`
+- License: MIT

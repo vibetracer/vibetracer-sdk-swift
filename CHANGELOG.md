@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.1.2] - 2026-04-21
+
+### Docs
+
+- `SKILL.md` substantially rewritten after external review. Changes aimed at
+  making the skill an actionable instruction for Claude rather than a README
+  reshaped as a skill:
+  - **Narrower trigger**: fires only when the user explicitly names Vibe
+    Tracer / `vibetracer-sdk-swift`, or when the package is already in
+    `Package.swift` / `Podfile` and the user asks about tracking. Does NOT
+    fire on generic "add analytics" asks — the skill explicitly instructs
+    Claude to decline and ask which vendor the user wants.
+  - **Added "When NOT to use"**: project already uses another analytics SDK;
+    deployment target below 2023 OS minimums; no UI lifecycle; user has not
+    named Vibe Tracer.
+  - **Added "Common mistakes"**: calling `track()` before `configure()`;
+    `configure()` in a View's `init`; hardcoding the API key; passing
+    unencodable property types; passing raw email as `userId`; etc.
+  - **Concrete API key storage patterns** (xcconfig, env var, debug-only
+    hardcoded) — replaces the previous "don't hardcode" warning that
+    contradicted its own inline example.
+  - **Verification checklist** — Claude is instructed not to declare done
+    until the dashboard shows the test event.
+  - **Transparency note** acknowledging the skill is authored by the SDK
+    vendor, with instructions for Claude to decline if the skill surfaced
+    from a generic prompt.
+  - Trimmed ~40% of marketing copy and README-duplicating SPM boilerplate
+    Claude can derive from any package.
+
 ## [1.1.1] - 2026-04-21
 
 Post-v1.1.0 self-review patch. No API-breaking changes; all fixes are internal
