@@ -71,6 +71,37 @@ final class ReducerTests: XCTestCase {
         XCTAssertEqual(fx, [.cancelTimer, .httpPost(batch: batch)])
     }
 
+    /// Symmetric with the `.flushRequested` empty-batch case: if the OS
+    /// backgrounds us with nothing queued, we must stay in `.queuing` with
+    /// no effects. A regression that force-transitioned to `.flushing` with
+    /// an empty batch would fire a degenerate httpPost.
+    func test_queuing_plus_appBackgrounded_emptyBatch_staysQueuing() {
+        let (s, fx) = reduce(.queuing, .appBackgrounded, batchLimit: 20, currentBatch: [])
+        XCTAssertEqual(s, .queuing)
+        XCTAssertTrue(fx.isEmpty)
+    }
+
+    /// `.queuing` absorbs stale callbacks (`.sendOk`, `.sendFailed`,
+    /// `.backoffExpired`) as no-ops — these can arrive from a prior
+    /// `.flushing` cycle whose `.sendOk` already transitioned us back to
+    /// `.queuing` + scheduled a timer. Processing them as legitimate
+    /// transitions would corrupt state (e.g. dropping disk entries for a
+    /// batch that already acked).
+    func test_queuing_plus_staleCallbacks_areNoOp() {
+        let spuriousBatch = [makeEvent("stale")]
+        let cases: [(QueueSignal, String)] = [
+            (.sendOk(batch: spuriousBatch), "sendOk"),
+            (.sendFailed(batch: spuriousBatch, permanent: false, retryAfter: nil), "sendFailed-retryable"),
+            (.sendFailed(batch: spuriousBatch, permanent: true, retryAfter: nil), "sendFailed-permanent"),
+            (.backoffExpired, "backoffExpired"),
+        ]
+        for (signal, label) in cases {
+            let (s, fx) = reduce(.queuing, signal, batchLimit: 20, currentBatch: [])
+            XCTAssertEqual(s, .queuing, "stale \(label) must not change state")
+            XCTAssertTrue(fx.isEmpty, "stale \(label) must emit no effects")
+        }
+    }
+
     // MARK: - flushing transitions
 
     func test_flushing_plus_sendOk_goesToEmpty_ifNoMore() {
@@ -104,6 +135,24 @@ final class ReducerTests: XCTestCase {
         // No removeFromDisk (we don't know which ids actually shipped) and
         // no scheduleTimer duplication (caller re-arms on next track).
         XCTAssertTrue(fx.isEmpty)
+    }
+
+    /// Symmetric stall-recovery for `.sendFailed` — a mismatched failure
+    /// callback must NOT transition to `.backoff` (which would retry the
+    /// wrong batch) and must NOT emit `.batchDropped` (which would report
+    /// drops for events that weren't actually sent). Self-heal to
+    /// `.queuing` and let the next timer/track re-arm normally.
+    func test_flushing_plus_sendFailed_mismatchedIds_selfHealsToQueuing() {
+        let inFlight = [makeEvent("a"), makeEvent("b")]
+        let wrongFail = [makeEvent("x"), makeEvent("y")]
+        // Try both retryable and permanent — both must stall-recover.
+        for permanent in [false, true] {
+            let (s, fx) = reduce(.flushing(batch: inFlight, attempt: 2),
+                                 .sendFailed(batch: wrongFail, permanent: permanent, retryAfter: nil),
+                                 batchLimit: 20, currentBatch: [])
+            XCTAssertEqual(s, .queuing, "permanent=\(permanent): mismatched sendFailed must heal to .queuing")
+            XCTAssertTrue(fx.isEmpty, "permanent=\(permanent): must emit no effects")
+        }
     }
 
     func test_flushing_plus_sendFailed_retryable_carriesAttemptIntoBackoff() {
@@ -161,12 +210,75 @@ final class ReducerTests: XCTestCase {
         ])
     }
 
+    /// A `Retry-After` hint on a permanent (400/422) response must be
+    /// ignored — the contract is "drop the batch because the payload shape
+    /// is broken, no amount of waiting will fix it". Guards against a
+    /// future refactor that mistakenly forwards retryAfter into the
+    /// permanent branch and parks the batch in .backoff forever.
+    func test_flushing_plus_sendFailed_permanent_ignoresRetryAfter() {
+        let batch = [makeEvent()]
+        let (s, fx) = reduce(.flushing(batch: batch, attempt: 1),
+                             .sendFailed(batch: batch, permanent: true, retryAfter: .seconds(30)),
+                             batchLimit: 20)
+        XCTAssertEqual(s, .empty)
+        XCTAssertEqual(fx, [
+            .removeFromDisk(eventIds: [batch[0].clientEventId]),
+            .batchDropped(reason: "permanent_client_error", count: 1),
+        ])
+        // Crucially: no .scheduleTimer effect, no .backoff state.
+    }
+
+    /// At attempt ≥ 7 the ladder plateaus at 60s base with ±20% jitter.
+    /// Asserts the FSM honors the plateau rather than blowing up linearly
+    /// (e.g. a regression that accidentally computed `attempt * 60`).
+    func test_flushing_plus_sendFailed_atLadderPlateau_schedules60sWithJitter() {
+        let batch = [makeEvent()]
+        let (s, fx) = reduce(.flushing(batch: batch, attempt: 10),
+                             .sendFailed(batch: batch, permanent: false, retryAfter: nil),
+                             batchLimit: 20)
+        XCTAssertEqual(s, .backoff(attempt: 10, pendingBatch: batch))
+        XCTAssertEqual(fx.count, 1)
+        guard case .scheduleTimer(after: let delay) = fx[0] else {
+            XCTFail("expected scheduleTimer, got \(fx[0])"); return
+        }
+        // 60s base × [0.8, 1.2] jitter = [48s, 72s]. Inclusive bounds.
+        XCTAssertGreaterThanOrEqual(delay, .milliseconds(48_000))
+        XCTAssertLessThanOrEqual(delay, .milliseconds(72_000))
+    }
+
     func test_flushing_plus_track_persistsWhileFlightInFlight() {
         let inFlight = [makeEvent("a")]
         let newE = makeEvent("b")
         let (s, fx) = reduce(.flushing(batch: inFlight, attempt: 1), .track(newE), batchLimit: 20)
         XCTAssertEqual(s, .flushing(batch: inFlight, attempt: 1))
         XCTAssertEqual(fx, [.persistToDisk(events: [newE])])
+    }
+
+    /// `.appTerminating` while a flush is in flight must be a no-op — the
+    /// batch is already persisted on disk, and the OS is about to reap us.
+    /// Regression guard: a transition to `.empty` here would orphan the
+    /// in-flight batch's ids from `currentBatch` on next launch, which in
+    /// the worst case could re-send an acked batch (duplicates rely on
+    /// server dedup) or drop one entirely.
+    func test_flushing_plus_appTerminating_isNoOp_preservesInFlightState() {
+        let inFlight = [makeEvent("a"), makeEvent("b")]
+        let (s, fx) = reduce(.flushing(batch: inFlight, attempt: 3),
+                             .appTerminating, batchLimit: 20)
+        XCTAssertEqual(s, .flushing(batch: inFlight, attempt: 3))
+        XCTAssertTrue(fx.isEmpty)
+    }
+
+    /// `.backoffExpired` can only legitimately arrive in `.backoff`. If it
+    /// somehow lands in `.flushing` (delayed timer fire after we raced
+    /// through backoff→flushing via `.flushRequested`, for example), it
+    /// must NOT emit another `.httpPost` — that would double-send the
+    /// in-flight batch.
+    func test_flushing_plus_backoffExpired_isNoOp() {
+        let inFlight = [makeEvent()]
+        let (s, fx) = reduce(.flushing(batch: inFlight, attempt: 2),
+                             .backoffExpired, batchLimit: 20)
+        XCTAssertEqual(s, .flushing(batch: inFlight, attempt: 2))
+        XCTAssertTrue(fx.isEmpty)
     }
 
     /// Integration over the reducer: simulate the full flush→backoff→flush
@@ -234,6 +346,21 @@ final class ReducerTests: XCTestCase {
     /// the otherwise unreachable case: if some future reentrancy or signal
     /// routing delivers `.sendFailed` in `.backoff`, we preserve state rather
     /// than double-advancing the attempt counter.
+    /// A stale `.sendOk` arriving while we're in `.backoff` must be a
+    /// no-op. If the reducer treated it as success — removing disk
+    /// entries and transitioning to `.empty` — a delayed ack from a
+    /// prior round could wipe the pending batch that the current backoff
+    /// is about to retry, leaving `.empty` with no events but a
+    /// scheduled retry for a batch that no longer exists.
+    func test_backoff_plus_sendOk_isDefensiveNoOp() {
+        let batch = [makeEvent()]
+        let staleAck = [makeEvent("stale")]
+        let (s, fx) = reduce(.backoff(attempt: 2, pendingBatch: batch),
+                             .sendOk(batch: staleAck), batchLimit: 20)
+        XCTAssertEqual(s, .backoff(attempt: 2, pendingBatch: batch))
+        XCTAssertTrue(fx.isEmpty)
+    }
+
     func test_backoff_plus_sendFailed_isDefensiveNoOp() {
         let batch = [makeEvent()]
         let (s, fx) = reduce(.backoff(attempt: 4, pendingBatch: batch),
