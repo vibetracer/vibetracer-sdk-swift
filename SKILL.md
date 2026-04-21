@@ -112,7 +112,7 @@ VibeTracer.reset()
 VibeTracer.flush() async
 VibeTracer.disable()
 VibeTracer.enable()
-VibeTracer.version   // "1.1.2" at time of writing
+VibeTracer.version   // "1.1.3" at time of writing
 ```
 
 ### `track(_:properties:)` rules
@@ -156,6 +156,40 @@ If the user's build fails to resolve from github.com (common in China), swap the
 ```
 pod 'VibeTracer', '~> 1.1'
 ```
+
+## Network & sandboxing — what (if anything) the user has to configure
+
+The ingestion endpoint is `https://api.vibetracer.xyz` (TLS 1.3, HTTP/2). For most apps there is **nothing to configure** — outbound HTTPS is allowed by default. But check these three cases before declaring done.
+
+### iOS / iPadOS / tvOS / visionOS
+
+- **App Transport Security (ATS):** default policy allows outbound HTTPS to any domain on TLS 1.2+. `api.vibetracer.xyz` is TLS 1.3 with modern ciphers, so no `NSAppTransportSecurity` or `NSExceptionDomains` entry is required.
+- **Network entitlement:** none. iOS grants client-network access by default.
+- **Local Network permission** (`NSLocalNetworkUsageDescription`): NOT required. That prompt is only for Bonjour / multicast / mDNS on the LAN, which this SDK never uses.
+
+### macOS (native AppKit apps)
+
+- If the app has **App Sandbox** enabled (almost always true for Mac App Store apps, optional elsewhere), the target's `.entitlements` file must contain:
+  ```xml
+  <key>com.apple.security.network.client</key>
+  <true/>
+  ```
+  Without it, `URLSession` calls to `api.vibetracer.xyz` will fail with a sandbox-denied error. Check the target's Signing & Capabilities tab — if "App Sandbox" is checked, "Outgoing Connections (Client)" must also be checked (which is what sets the entitlement).
+- If the app is **not sandboxed**, no entitlement is needed.
+
+### Mac Catalyst / "Designed for iPad" on Mac
+
+Both. Mac Catalyst apps run under App Sandbox on macOS AND inherit iOS ATS — so the entitlement IS required. "Designed for iPad" running on Apple Silicon Mac is the same: sandboxed, needs `com.apple.security.network.client`. If the iOS build worked but the Mac build silently drops events, this is the first thing to check.
+
+### Symptom: events work in simulator, fail on device
+
+If the simulator dashboard shows events but a real device doesn't:
+
+1. Check `https://api.vibetracer.xyz/health` returns 200 from the device's network (cellular firewall, corporate proxy, or strict VPN could block it).
+2. Check Xcode console for `ATS` or `CFNetwork` errors — if the network stack is refusing the connection, the error is explicit there.
+3. Check `NSURLErrorDomain` / `-1003` (host not found) — indicates DNS resolution failure, usually a networking issue on the device's side, not the SDK's.
+
+Only add `NSAppTransportSecurity` exceptions as a last resort — they broaden the app's security posture and shouldn't be needed for a modern HTTPS service.
 
 ## Common mistakes — read before writing code
 

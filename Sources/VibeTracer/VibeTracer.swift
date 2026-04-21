@@ -18,7 +18,7 @@ import WatchKit
 /// await VibeTracer.flush()
 /// VibeTracer.disable()   // CCPA/GDPR opt-out — persists across launches
 /// VibeTracer.enable()
-/// VibeTracer.version     // "1.1.2"
+/// VibeTracer.version     // "1.1.3"
 /// ```
 ///
 /// Every method is safe to call from any thread. `track()` is fire-and-forget:
@@ -169,7 +169,7 @@ public enum VibeTracer {
 
     // MARK: - version
 
-    public static let version = "1.1.2"
+    public static let version = "1.1.3"
 
     // MARK: - internals
 

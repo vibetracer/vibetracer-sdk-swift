@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.1.3] - 2026-04-21
+
+### Docs
+
+- `SKILL.md`: added "Network & sandboxing" section covering the three real
+  cases for outbound HTTPS to `api.vibetracer.xyz`:
+  - **iOS/iPadOS/tvOS/visionOS** — nothing to configure (ATS allows modern
+    TLS HTTPS by default; no entitlement; Local Network permission is NOT
+    relevant — that's for Bonjour/LAN discovery only).
+  - **macOS AppKit** — if App Sandbox is enabled, target needs the
+    `com.apple.security.network.client` entitlement (surfaced in Xcode as
+    "Outgoing Connections (Client)" under Signing & Capabilities → App
+    Sandbox).
+  - **Mac Catalyst / "Designed for iPad" on Mac** — sandboxed by default;
+    same entitlement requirement as native macOS. First thing to check if
+    iOS works but Mac silently drops events.
+- Plus a "symptom: works in simulator, fails on device" debugging tree
+  distinguishing cellular/proxy blocks, ATS errors, and DNS failures.
+
 ## [1.1.2] - 2026-04-21
 
 ### Docs
