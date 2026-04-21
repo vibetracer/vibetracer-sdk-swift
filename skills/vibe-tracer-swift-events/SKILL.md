@@ -218,6 +218,18 @@ Ship in waves. If the user asks for a 20-event plan on day one, push back.
 
 **If the user has not shipped Wave 1 yet, do NOT write Wave 2 for them.** The temptation to deliver a "complete" plan is the same temptation that makes the plan useless.
 
+## Take a stance when you present options
+
+When more than one reasonable next action exists, state the one you'd take and why — in one sentence. Don't hand the user a neutral menu.
+
+```
+✅ "I'd do X because Y. OK with that, or prefer Z?"
+❌ "(A) X, (B) Y, (C) Z — let me know which you'd like."
+❌ "Either works — your call."
+```
+
+The user can override. But they should be choosing *against* a recommendation, not picking blindly.
+
 ## When NOT to use this skill
 
 - The user has not named Vibe Tracer and `vibetracer-sdk-swift` is not in their `Package.swift` or `Podfile`. Decline and ask which vendor they want. See `vibe-tracer-swift-install` for the installation path if they choose Vibe Tracer.

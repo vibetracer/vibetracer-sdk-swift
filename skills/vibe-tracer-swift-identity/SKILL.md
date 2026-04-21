@@ -95,6 +95,18 @@ VibeTracer.configure(apiKey: "...")   // too late
 
 Any call made before `configure()` is silently dropped with a console warning. `configure()` must be the first thing in the app's entry point (see `vibe-tracer-swift-install`); `identify()` goes later, when login completes.
 
+## Take a stance when you present options
+
+When more than one reasonable next action exists, state the one you'd take and why — in one sentence. Don't hand the user a neutral menu.
+
+```
+✅ "I'd do X because Y. OK with that, or prefer Z?"
+❌ "(A) X, (B) Y, (C) Z — let me know which you'd like."
+❌ "Either works — your call."
+```
+
+The user can override. But they should be choosing *against* a recommendation, not picking blindly.
+
 ## Cross-references
 
 - For first-time setup (API key, `configure()` placement), see `vibe-tracer-swift-install`.

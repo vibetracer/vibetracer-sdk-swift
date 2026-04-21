@@ -85,6 +85,18 @@ VibeTracer.configure(apiKey: "...", debug: true)
 
 then look at Xcode console for every `[VibeTracer]` line from `configure()` through the test event. This confirms the track call is reaching the SDK. If you see `[debug] would send: integration_test`, the SDK is fine — the problem is network, API key, or (in non-debug mode) the dashboard-side gotchas above. Flip `debug` back to `false` for actual verification.
 
+## Take a stance when you present options
+
+When more than one reasonable next action exists, state the one you'd take and why — in one sentence. Don't hand the user a neutral menu.
+
+```
+✅ "I'd do X because Y. OK with that, or prefer Z?"
+❌ "(A) X, (B) Y, (C) Z — let me know which you'd like."
+❌ "Either works — your call."
+```
+
+The user can override. But they should be choosing *against* a recommendation, not picking blindly.
+
 ## Cross-references
 
 - For the initial integration (API key, `configure()` placement), see `vibe-tracer-swift-install`.

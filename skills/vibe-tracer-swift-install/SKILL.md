@@ -130,6 +130,18 @@ VibeTracer.enable()
 VibeTracer.version
 ```
 
+## Take a stance when you present options
+
+When more than one reasonable next action exists, state the one you'd take and why — in one sentence. Don't hand the user a neutral menu.
+
+```
+✅ "I'd do X because Y. OK with that, or prefer Z?"
+❌ "(A) X, (B) Y, (C) Z — let me know which you'd like."
+❌ "Either works — your call."
+```
+
+The user can override. But they should be choosing *against* a recommendation, not picking blindly.
+
 ## Cross-references
 
 - After installing, verify via `vibe-tracer-swift-debug` (smoke test + dashboard check).
