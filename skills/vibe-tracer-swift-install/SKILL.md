@@ -34,9 +34,22 @@ Do not announce a "plan" and wait for confirmation. Do not list alternatives. As
 
 ## Getting the API key
 
-Format: `vtr_live_` followed by 32 hex chars. They get one at `https://vibetracer.xyz/projects/<slug>/settings` → API keys → Create. Shown exactly once at creation; have them paste it to you directly.
+Format: `vtr_live_` followed by 32 hex chars. Send the user to this URL:
 
-If the user's opening prompt includes a phrase like "my project slug is X" (the dashboard's install one-liner forwards it for this reason), substitute `<slug>` with that value when you quote the URL — don't ask them to fill it in themselves. If no slug is in the prompt, leave the `<slug>` placeholder literal and let the user paste the correct URL back.
+```
+https://www.vibetracer.xyz/projects/<slug>/agent-needs-api-key
+```
+
+The dashboard reads the slug, checks whether the project has received any events yet, and redirects automatically:
+
+- **Empty project (first-time setup)** → `/projects/<slug>` (Overview page, which surfaces the install one-liner + a Copy-Prompt card for the next step).
+- **Existing project** → `/projects/<slug>/settings?tab=keys` (Keys & access tab, with Create-key UI).
+
+**Where the slug comes from:** the dashboard's install one-liner is `curl … | bash -s -- --project <slug>`, and `install.sh` embeds the slug into the post-install prompt (`"…help me figure out what to track. My project slug is X."`). That sentence is in the user's first message to you — extract the slug from it and substitute into the URL above.
+
+If the slug isn't in the user's prompt (they ran the installer without `--project`, or they're invoking this skill manually), ask for it in one line: *"What's your project slug? It's the last path segment of your dashboard URL — `vibetracer.xyz/projects/<this-part>`."*
+
+The API key itself is shown exactly once at creation. Have the user paste it to you directly; don't store or log it yourself.
 
 ## Red flags — STOP if you're about to write any of these
 
