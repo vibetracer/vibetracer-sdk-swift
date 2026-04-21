@@ -20,7 +20,7 @@ Usage:
   install.sh [--tool <name>] [--target <path>] [--version <ref>] [--uninstall] [--help]
 
 Flags:
-  --tool <name>     One of: claude (default), cursor, windsurf, all.
+  --tool <name>     One of: claude (default), cursor, windsurf, codex, all.
   --target <path>   Custom absolute directory. Mutually exclusive with --tool.
   --version <ref>   Git ref (tag or branch). Defaults to main.
   --uninstall       Remove all vibe-tracer-swift-* skills from the resolved target(s).
@@ -30,6 +30,7 @@ Tool → path:
   claude    ~/.claude/skills
   cursor    ~/.cursor/rules
   windsurf  ~/.codeium/windsurf/rules
+  codex     ~/.codex/skills  (also appends a router block to ~/.codex/AGENTS.md)
   all       auto-detects which of the above exist on this machine.
 EOF
 }
@@ -55,7 +56,8 @@ path_for_tool() {
     claude) echo "$HOME/.claude/skills" ;;
     cursor) echo "$HOME/.cursor/rules" ;;
     windsurf) echo "$HOME/.codeium/windsurf/rules" ;;
-    *) echo "error: unknown tool: $1 (must be one of: claude, cursor, windsurf, all)" >&2; exit 2 ;;
+    codex) echo "$HOME/.codex/skills" ;;
+    *) echo "error: unknown tool: $1 (must be one of: claude, cursor, windsurf, codex, all)" >&2; exit 2 ;;
   esac
 }
 
@@ -66,20 +68,121 @@ elif [ "$TOOL" = "all" ]; then
   [ -d "$HOME/.claude" ] && TARGETS+=("$(path_for_tool claude)")
   [ -d "$HOME/.cursor" ] && TARGETS+=("$(path_for_tool cursor)")
   [ -d "$HOME/.codeium/windsurf" ] && TARGETS+=("$(path_for_tool windsurf)")
+  [ -d "$HOME/.codex" ] && TARGETS+=("$(path_for_tool codex)")
   if [ ${#TARGETS[@]} -eq 0 ]; then
-    echo "error: --tool all found no known agent-tool directories (~/.claude, ~/.cursor, ~/.codeium/windsurf)." >&2
+    echo "error: --tool all found no known agent-tool directories (~/.claude, ~/.cursor, ~/.codeium/windsurf, ~/.codex)." >&2
     echo "Install one, or pass --tool <name> / --target <path> explicitly." >&2
     exit 1
   fi
 else
-  case "$TOOL" in claude|cursor|windsurf) ;; *) path_for_tool "$TOOL" >/dev/null ;; esac
+  case "$TOOL" in claude|cursor|windsurf|codex) ;; *) path_for_tool "$TOOL" >/dev/null ;; esac
   TARGETS+=("$(path_for_tool "$TOOL")")
 fi
+
+codex_agents_md_block() {
+  cat <<'BLOCK'
+<!-- vibetracer:begin -->
+<!-- version: v1 -->
+## Vibe Tracer (iOS analytics)
+
+When the user is working on a Swift app AND any of:
+- mentions Vibe Tracer or `vibetracer-sdk-swift`
+- `vibetracer-sdk-swift` appears in Package.swift / Podfile / project
+- asks about analytics, event tracking, or user identity
+
+Read the matching file from `~/.codex/skills/` before responding:
+- `vibe-tracer-swift-install/SKILL.md` — first-time integration
+- `vibe-tracer-swift-events/SKILL.md` — what to track
+- `vibe-tracer-swift-identity/SKILL.md` — login/logout, identify()/reset()
+- `vibe-tracer-swift-debug/SKILL.md` — events not arriving
+- `vibe-tracer-swift-platform-config/SKILL.md` — macOS / Catalyst / Designed-for-iPad
+
+These files are the source of truth. Do not improvise when they apply.
+<!-- vibetracer:end -->
+BLOCK
+}
+
+write_codex_agents_md() {
+  local f="$HOME/.codex/AGENTS.md"
+  local tmp="$f.vibetracer.tmp"
+  mkdir -p "$(dirname "$f")"
+
+  if [ ! -f "$f" ]; then
+    codex_agents_md_block > "$f"
+    return
+  fi
+
+  local begin_n end_n
+  begin_n=$(grep -c "^<!-- vibetracer:begin" "$f" || true)
+  end_n=$(grep -c "^<!-- vibetracer:end -->" "$f" || true)
+
+  if [ "$begin_n" != "$end_n" ]; then
+    echo "error: $f has $begin_n vibetracer begin sentinel(s) and $end_n end sentinel(s)." >&2
+    echo "Fix manually (remove any vibetracer:begin .. vibetracer:end block) and re-run." >&2
+    exit 1
+  fi
+
+  awk '
+    /^<!-- vibetracer:begin/ { skip = 1; next }
+    /^<!-- vibetracer:end -->/ { skip = 0; next }
+    skip { next }
+    { out[++n] = $0 }
+    END {
+      for (i = n; i > 0; i--) if (out[i] ~ /[^[:space:]]/) { last = i; break }
+      for (i = 1; i <= last; i++) print out[i]
+    }
+  ' "$f" > "$tmp"
+
+  if [ -s "$tmp" ]; then
+    printf '\n' >> "$tmp"
+  fi
+  codex_agents_md_block >> "$tmp"
+  mv "$tmp" "$f"
+}
+
+strip_codex_agents_md() {
+  local f="$HOME/.codex/AGENTS.md"
+  local tmp="$f.vibetracer.tmp"
+  [ -f "$f" ] || return 0
+
+  awk '
+    /^<!-- vibetracer:begin/ { skip = 1; next }
+    /^<!-- vibetracer:end -->/ { skip = 0; next }
+    skip { next }
+    { out[++n] = $0 }
+    END {
+      for (i = 1; i <= n; i++) if (out[i] ~ /[^[:space:]]/) { first = i; break }
+      for (i = n; i > 0; i--) if (out[i] ~ /[^[:space:]]/) { last = i; break }
+      if (!first) exit 0
+      prev_blank = 0
+      for (i = first; i <= last; i++) {
+        if (out[i] ~ /^[[:space:]]*$/) {
+          if (!prev_blank) print ""
+          prev_blank = 1
+        } else {
+          print out[i]
+          prev_blank = 0
+        }
+      }
+    }
+  ' "$f" > "$tmp"
+
+  if [ ! -s "$tmp" ]; then
+    rm -f "$f" "$tmp"
+  else
+    mv "$tmp" "$f"
+  fi
+}
 
 for t in "${TARGETS[@]}"; do
   if [ "$UNINSTALL" = "1" ]; then
     for s in "${SKILLS[@]}"; do rm -rf "$t/$s"; done
-    echo "✓ Removed Vibe Tracer Swift skills from $t"
+    if [ "$t" = "$HOME/.codex/skills" ]; then
+      strip_codex_agents_md
+      echo "✓ Removed Vibe Tracer Swift skills from $t and stripped ~/.codex/AGENTS.md router block"
+    else
+      echo "✓ Removed Vibe Tracer Swift skills from $t"
+    fi
   else
     mkdir -p "$t"
     for s in "${SKILLS[@]}"; do
@@ -88,8 +191,14 @@ for t in "${TARGETS[@]}"; do
       mkdir -p "$t/$s"
       curl -fsSL "$url" -o "$t/$s/SKILL.md"
     done
+    if [ "$t" = "$HOME/.codex/skills" ]; then
+      write_codex_agents_md
+    fi
     echo "✓ Installed ${#SKILLS[@]} Vibe Tracer Swift skills to $t:"
     for s in "${SKILLS[@]}"; do echo "    $s"; done
+    if [ "$t" = "$HOME/.codex/skills" ]; then
+      echo "    (also wired ~/.codex/AGENTS.md between vibetracer:* sentinels)"
+    fi
     echo ""
     echo "To get started, tell your AI:"
     echo "    \"add vibe tracer event tracking to my app\""
