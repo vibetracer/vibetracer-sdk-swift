@@ -190,6 +190,17 @@ for t in "${TARGETS[@]}"; do
       [ -n "$VERSION" ] && url="$url?ref=$VERSION"
       mkdir -p "$t/$s"
       curl -fsSL "$url" -o "$t/$s/SKILL.md"
+
+      # Per-skill colocated scripts. Only vibe-tracer-swift-install has them today.
+      # If more skills grow scripts later, extend this block — don't loop over
+      # globbed URLs because there's no directory listing on the CDN.
+      if [ "$s" = "vibe-tracer-swift-install" ]; then
+        script_url="$BASE_URL/skills/$s/scripts/wire-xcode.rb"
+        [ -n "$VERSION" ] && script_url="$script_url?ref=$VERSION"
+        mkdir -p "$t/$s/scripts"
+        curl -fsSL "$script_url" -o "$t/$s/scripts/wire-xcode.rb"
+        chmod +x "$t/$s/scripts/wire-xcode.rb"
+      fi
     done
     if [ "$t" = "$HOME/.codex/skills" ]; then
       write_codex_agents_md

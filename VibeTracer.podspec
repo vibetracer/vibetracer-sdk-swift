@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'VibeTracer'
-  s.version          = '2.0.0'
+  s.version          = '2.0.1'
   s.summary          = 'Agent-native analytics SDK for Apple platforms.'
   s.description      = <<-DESC
     Vibe Tracer is the analytics SDK for vibe coders — install via the
@@ -11,7 +11,7 @@ Pod::Spec.new do |s|
   s.homepage         = 'https://github.com/vibetracer/vibetracer-sdk-swift'
   s.license          = { :type => 'MIT', :file => 'LICENSE' }
   s.author           = { 'Vibe Tracer' => 'dev@vibetracer.xyz' }
-  s.source           = { :git => 'https://github.com/vibetracer/vibetracer-sdk-swift.git', :tag => s.version.to_s }
+  s.source           = { :git => 'https://github.com/vibetracer/vibetracer-sdk-swift.git', :tag => "v#{s.version}" }
 
   s.swift_version = '5.9'
   s.ios.deployment_target     = '17.0'

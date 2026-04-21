@@ -2,6 +2,7 @@
 name: vibe-tracer-swift-debug
 description: Use when events are not appearing in the Vibe Tracer dashboard, OR the user reports tracking symptoms (works in simulator but not device, silent failures, sudden drop in events), OR asks how to verify their Vibe Tracer integration.
 version: 2026-04-21
+sdk-version: 2.0.1
 ---
 
 # Debugging Vibe Tracer Integration
