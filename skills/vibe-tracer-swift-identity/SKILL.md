@@ -1,6 +1,7 @@
 ---
 name: vibe-tracer-swift-identity
 description: Use when the user is wiring login / logout / account flows with Vibe Tracer tracking, OR asks about `identify()` / `reset()` / user lifecycle. Requires the SDK to already be installed.
+version: 2026-04-21
 ---
 
 # Identity Lifecycle with Vibe Tracer
