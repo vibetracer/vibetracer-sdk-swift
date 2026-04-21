@@ -2,9 +2,9 @@ import Foundation
 
 /// Metadata describing a previously-active session that has since expired.
 ///
-/// Returned by ``SessionTracker/takeExpiredPriorSession()`` so that
-/// `VibeTracerCore` can synthesize a `$session_end` event attributed to the
-/// prior session's id and timestamp rather than the new session's.
+/// Returned inside ``SessionRolloverResult`` so that `VibeTracerCore` can
+/// synthesize a `$session_end` event attributed to the prior session's id and
+/// timestamp rather than the new session's.
 public struct ExpiredSession: Sendable, Equatable {
     public let sessionId: UUID
     public let lastActivityAt: Date
@@ -12,6 +12,27 @@ public struct ExpiredSession: Sendable, Equatable {
     public init(sessionId: UUID, lastActivityAt: Date) {
         self.sessionId = sessionId
         self.lastActivityAt = lastActivityAt
+    }
+}
+
+/// Result of a single ``SessionTracker/rollover(now:)`` call, describing
+/// atomically what happened to the session identity:
+///
+/// - ``expired``: non-nil only if a previously-live session just aged out on
+///   this call. Use its metadata for `$session_end` attribution.
+/// - ``currentSessionId``: the id the caller should use for subsequent events
+///   — either the live reused session or the freshly-minted one.
+/// - ``wasMinted``: `true` only when `currentSessionId` was just created (i.e.
+///   on a fresh install, or immediately after an expiry was reported).
+public struct SessionRolloverResult: Sendable, Equatable {
+    public let expired: ExpiredSession?
+    public let currentSessionId: UUID
+    public let wasMinted: Bool
+
+    public init(expired: ExpiredSession?, currentSessionId: UUID, wasMinted: Bool) {
+        self.expired = expired
+        self.currentSessionId = currentSessionId
+        self.wasMinted = wasMinted
     }
 }
 
@@ -88,6 +109,95 @@ public final class SessionTracker: @unchecked Sendable {
 
     // MARK: - Public API
 
+    /// Atomically advances the session identity and reports what happened.
+    ///
+    /// This is the single source of truth for session rollover decisions. A
+    /// caller at any lifecycle edge (launch, foreground, first track) invokes
+    /// `rollover(now:)` once and uses the result to decide whether to emit
+    /// `$session_end` (`expired != nil`), `$session_start` (`wasMinted`), or
+    /// neither (session reused within the idle window).
+    ///
+    /// The `wasMinted` flag is the critical bit that distinguishes a freshly-
+    /// created session from a reused one — it prevents spurious `$session_start`
+    /// events on every foreground.
+    ///
+    /// Call this exactly once per lifecycle edge. Back-to-back calls within
+    /// the idle window will report `wasMinted: false` on the second call (the
+    /// session is reused) — this is the invariant `VibeTracerCore` relies on
+    /// to suppress duplicate `$session_start` events.
+    @discardableResult
+    public func rollover(now: Date? = nil) -> SessionRolloverResult {
+        lock.lock(); defer { lock.unlock() }
+        let t = now ?? clock.now()
+
+        // 1. Check if a live in-memory session has idled out.
+        var expiredToReport: ExpiredSession? = nil
+        if let current = _currentSessionId,
+           let lastActivity = Self.readLastActivity(defaults: defaults) {
+            let age = t.timeIntervalSince(lastActivity)
+            if age > idleTimeout.seconds {
+                expiredToReport = ExpiredSession(
+                    sessionId: current,
+                    lastActivityAt: lastActivity
+                )
+                _currentSessionId = nil
+                // Clear any stale cross-process pending prior — the in-memory
+                // expiry supersedes it (they describe the same session).
+                _pendingExpiredPrior = nil
+            }
+        }
+
+        // 2. If no in-memory expiry, consider the persisted-from-prior-process
+        //    session: either report it as expired or adopt it as current.
+        if expiredToReport == nil, _currentSessionId == nil,
+           let prior = _pendingExpiredPrior {
+            let age = t.timeIntervalSince(prior.lastActivityAt)
+            if age > idleTimeout.seconds {
+                expiredToReport = prior
+                _pendingExpiredPrior = nil
+            } else {
+                // Still fresh — adopt it as the live session. No expiry, no
+                // mint; the caller gets back a reused id with `wasMinted: false`.
+                _currentSessionId = prior.sessionId
+                _pendingExpiredPrior = nil
+                Self.persist(
+                    sessionId: prior.sessionId,
+                    lastActivity: t,
+                    defaults: defaults
+                )
+                return SessionRolloverResult(
+                    expired: nil,
+                    currentSessionId: prior.sessionId,
+                    wasMinted: false
+                )
+            }
+        }
+
+        // 3. If we still have a live current session (no expiry, no adoption),
+        //    this is the hot path — reuse as-is.
+        if let current = _currentSessionId {
+            return SessionRolloverResult(
+                expired: expiredToReport,
+                currentSessionId: current,
+                wasMinted: false
+            )
+        }
+
+        // 4. Nothing live and nothing adoptable — mint a fresh session.
+        let new = UUID()
+        _currentSessionId = new
+        Self.persist(
+            sessionId: new,
+            lastActivity: t,
+            defaults: defaults
+        )
+        return SessionRolloverResult(
+            expired: expiredToReport,
+            currentSessionId: new,
+            wasMinted: true
+        )
+    }
+
     /// Returns the prior session's metadata if it has expired. Idempotent
     /// until the prior session is consumed by ``startSessionIfNeeded()``
     /// minting a new one.
@@ -96,6 +206,11 @@ public final class SessionTracker: @unchecked Sendable {
     /// window), this returns nil and, as a side effect, promotes the prior
     /// session to the current in-memory session so subsequent calls to
     /// ``startSessionIfNeeded()`` reuse its id.
+    ///
+    /// Prefer ``rollover(now:)`` in new code — it atomically reports both the
+    /// expiry AND whether a new session was just minted. This method exists
+    /// for backward-compat with earlier call sites that expected idempotency
+    /// across multiple pokes.
     public func takeExpiredPriorSession() -> ExpiredSession? {
         lock.lock(); defer { lock.unlock() }
         let now = clock.now()
@@ -139,67 +254,13 @@ public final class SessionTracker: @unchecked Sendable {
         return _currentSessionId
     }
 
-    /// Ensures a live session exists, minting a new one if necessary.
-    /// Returns the current session id.
-    ///
-    /// "Minting" happens in three cases:
-    ///   - No prior session was persisted and none has been started.
-    ///   - A prior session was persisted but has expired (idle timeout).
-    ///   - A session was started earlier in this process but its
-    ///     `lastActivityAt` has now crossed the idle threshold.
+    /// Ensures a live session exists, minting a new one if necessary, and
+    /// returns the current session id. Thin wrapper around ``rollover(now:)``
+    /// that discards the `expired` / `wasMinted` signals — kept for
+    /// backward-compat with `track()`'s hot path, which just needs the id.
     @discardableResult
     public func startSessionIfNeeded() -> UUID {
-        lock.lock(); defer { lock.unlock() }
-
-        let now = clock.now()
-
-        // Fast path: we already have an in-memory session that hasn't idled.
-        if let current = _currentSessionId {
-            let lastActivity = Self.readLastActivity(defaults: defaults) ?? now
-            let age = now.timeIntervalSince(lastActivity)
-            if age <= idleTimeout.seconds {
-                return current
-            }
-            // Current in-memory session has gone idle: roll it over.
-            _pendingExpiredPrior = ExpiredSession(
-                sessionId: current,
-                lastActivityAt: lastActivity
-            )
-        }
-
-        // Prior on-disk session might still be fresh — adopt it.
-        if let prior = _pendingExpiredPrior {
-            let age = now.timeIntervalSince(prior.lastActivityAt)
-            if age <= idleTimeout.seconds {
-                _currentSessionId = prior.sessionId
-                _pendingExpiredPrior = nil
-                Self.persist(
-                    sessionId: prior.sessionId,
-                    lastActivity: now,
-                    defaults: defaults
-                )
-                return prior.sessionId
-            }
-        }
-
-        // Mint a fresh session. Note: we intentionally do NOT clear
-        // `_pendingExpiredPrior` here — the caller is expected to consume
-        // it via takeExpiredPriorSession() before or after this call. We
-        // clear it on the *next* takeExpiredPriorSession() once the new
-        // session is in place.
-        let new = UUID()
-        _currentSessionId = new
-        // Consuming the pending-expired-prior happens atomically with the
-        // mint: the contract says takeExpiredPriorSession() returns nil once
-        // startSessionIfNeeded has consumed it. Hold onto it in a local so
-        // the caller's subsequent take-call (which returns nil) is correct.
-        _pendingExpiredPrior = nil
-        Self.persist(
-            sessionId: new,
-            lastActivity: now,
-            defaults: defaults
-        )
-        return new
+        return rollover().currentSessionId
     }
 
     /// Bumps the last-activity timestamp to "now", extending the idle window
