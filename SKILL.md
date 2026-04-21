@@ -5,9 +5,9 @@ description: Use when the user asks to add event tracking, analytics, or user me
 
 # Vibe Tracer Swift SDK
 
-A lightweight, privacy-respecting analytics SDK for Apple platforms. Drop it into any Swift app with one package dependency, call `VibeTracer.configure(apiKey:)` once at launch, and start tracking events from anywhere in the codebase. Built for vibe coders shipping apps and for AI agents wiring analytics into them — the public surface is intentionally tiny (six symbols) so there's nothing to misuse.
+A lightweight, privacy-respecting analytics SDK for Apple platforms. Drop it into any Swift app with one package dependency, call `VibeTracer.configure(apiKey:)` once at launch, and start tracking events from anywhere in the codebase. Built for vibe coders shipping apps and for AI agents wiring analytics into them — the public surface is intentionally tiny (eight symbols: `configure`, `track`, `identify`, `reset`, `flush`, `disable`, `enable`, `version`) so there's nothing to misuse.
 
-Supports iOS 17+, macOS 14+, tvOS 17+, watchOS 10+, and visionOS 1+. Single SwiftPM package, one XCFramework at runtime, no Objective-C bridging headers, no CocoaPods required (but available).
+Supports iOS 17+, macOS 14+, tvOS 17+, watchOS 10+, and visionOS 1+. Ships as source (no prebuilt XCFramework), so you can grep exactly what the SDK collects and sends. No Objective-C bridging headers. Available via Swift Package Manager (primary) or CocoaPods (legacy projects).
 
 ## Prerequisite
 
