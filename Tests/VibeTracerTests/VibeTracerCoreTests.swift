@@ -559,7 +559,81 @@ final class VibeTracerCoreTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(count, 1)
     }
 
-    /// 17 — Unencodable property value: key dropped, event still sent.
+    /// 17 — Foregrounded twice within the idle window: exactly one
+    /// `$session_start` is emitted. Regression test for v1.1.0 bug where
+    /// `handleActivate()` unconditionally emitted `$session_start` even when
+    /// the session was reused.
+    func test_doubleForeground_withinIdleWindow_emitsSingleSessionStart() async throws {
+        let (h, _) = await makeHarness()
+        let recorder = RequestRecorder()
+        MockURLProtocol.handler = { req in
+            recorder.record(req)
+            return (HTTPURLResponse(url: req.url!, statusCode: 202, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        await h.core.start()
+        await settle(h.core)
+
+        // Foreground #1 (simulated): `start()` already emitted a
+        // $session_start. Now fire onActivate to simulate the second
+        // foreground 10 minutes later.
+        h.clock.advance(by: .seconds(10 * 60))
+        h.lifecycle.onActivate()
+        await settle(h.core)
+
+        // Flush so we can inspect what actually shipped.
+        h.clock.advance(by: .seconds(5))
+        await settle(h.core)
+
+        var sessionStartCount = 0
+        for r in recorder.all() {
+            for name in eventNames(in: r.body) where name == "$session_start" {
+                sessionStartCount += 1
+            }
+        }
+        XCTAssertEqual(sessionStartCount, 1,
+                       "Reused session within idle window must not re-emit $session_start")
+    }
+
+    /// 18 — `flush()` during `.backoff` forces an immediate retry. Regression
+    /// test for v1.1.0 bug where `.backoff + .appBackgrounded` fell through
+    /// to a no-op, so `flush()` returned without doing anything.
+    func test_flush_duringBackoff_forcesImmediateRetry() async throws {
+        let (h, _) = await makeHarness()
+        let recorder = RequestRecorder()
+        let lock = NSLock()
+        nonisolated(unsafe) var attempts = 0
+        // First attempt fails (drives us into backoff); subsequent attempts
+        // succeed so we can verify flush actually pushed through.
+        MockURLProtocol.handler = { req in
+            recorder.record(req)
+            lock.lock(); attempts += 1; let n = attempts; lock.unlock()
+            if n == 1 { throw URLError(.notConnectedToInternet) }
+            return (HTTPURLResponse(url: req.url!, statusCode: 202, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        await h.core.start()
+        await settle(h.core)
+
+        await h.core.track(event: "pending", properties: nil)
+        await settle(h.core)
+
+        // First flush fails → we transition to .backoff (timer armed for
+        // ~1s + jitter).
+        h.clock.advance(by: .seconds(5))
+        await settle(h.core)
+        XCTAssertEqual(attempts, 1, "should have tried once and failed")
+        let stateAfterFail = await h.core._state()
+        guard case .backoff = stateAfterFail else {
+            XCTFail("expected .backoff state, got \(stateAfterFail)"); return
+        }
+
+        // flush() must force an immediate retry rather than waiting for the
+        // backoff timer to fire.
+        await h.core.flush()
+        XCTAssertGreaterThanOrEqual(attempts, 2,
+                                    "flush() in .backoff must force a retry, got only \(attempts) attempts")
+    }
+
+    /// 19 — Unencodable property value: key dropped, event still sent.
     func test_unencodableProperty_keyDropped_eventStillSent() async throws {
         let (h, _) = await makeHarness()
         let recorder = RequestRecorder()

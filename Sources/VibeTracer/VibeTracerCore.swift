@@ -48,6 +48,7 @@ public actor VibeTracerCore {
     private let deviceId: UUID
     private let userIdStore: UserIdStore
     private let sessionTracker: SessionTracker
+    private let sessionEmitter: SessionEmitter
     private let disk: DiskQueue
     private let network: Network
     private let clock: Clock
@@ -78,6 +79,28 @@ public actor VibeTracerCore {
     private var activeTimerHandle: ClockHandle?
     private var started: Bool = false
 
+    /// Cached current session id. Populated in ``start()`` from the rollover
+    /// result, refreshed in ``handleActivate()`` when a new session is minted.
+    /// `track()` uses this instead of calling back into `SessionTracker` on
+    /// every event, avoiding a `UserDefaults` read per tracked event.
+    private var currentSessionId: UUID?
+
+    // MARK: - Lifecycle Task coalescing
+    //
+    // Lifecycle callbacks arrive on arbitrary threads. We can't reach into an
+    // actor from a synchronous closure, so each callback spawns a `Task`. Under
+    // rapid foreground↔background cycling (test harnesses, multi-scene apps),
+    // N Tasks accumulate and contend for actor re-entry.
+    //
+    // We use a single `lifecycleTask` handle and cancel the prior pending one
+    // before spawning a new handler. This coalesces bursts: if five
+    // activate/background signals fire in 20ms, only the last runs to
+    // completion. Strict per-event ordering is sacrificed (intentionally —
+    // lifecycle signals are edge-triggered, and losing an intermediate edge is
+    // preferable to spawning unbounded Tasks).
+
+    private var lifecycleTask: Task<Void, Never>?
+
     // MARK: - Init
 
     public init(
@@ -97,6 +120,11 @@ public actor VibeTracerCore {
         self.deviceId = deviceId
         self.userIdStore = userIdStore
         self.sessionTracker = sessionTracker
+        self.sessionEmitter = SessionEmitter(
+            deviceId: deviceId,
+            userIdStore: userIdStore,
+            clock: clock
+        )
         self.disk = disk
         self.network = network
         self.clock = clock
@@ -127,14 +155,17 @@ public actor VibeTracerCore {
         // Wire lifecycle callbacks BEFORE draining the mailbox: callbacks all
         // enqueue via `enqueue(_:)`, which is safe even before drainTask is
         // spun up (the AsyncStream buffers).
+        //
+        // Each callback cancels any pending lifecycle Task before spawning a
+        // new one — see `lifecycleTask` docs for the coalescing rationale.
         lifecycle.onActivate = { [weak self] in
-            Task { await self?.handleActivate() }
+            Task { [weak self] in await self?.scheduleLifecycleWork { await $0.handleActivate() } }
         }
         lifecycle.onBackground = { [weak self] in
-            Task { await self?.handleBackground() }
+            Task { [weak self] in await self?.scheduleLifecycleWork { await $0.handleBackground() } }
         }
         lifecycle.onTerminate = { [weak self] in
-            Task { await self?.handleTerminate() }
+            Task { [weak self] in await self?.scheduleLifecycleWork { await $0.handleTerminate() } }
         }
         lifecycle.start()
 
@@ -142,7 +173,7 @@ public actor VibeTracerCore {
         // early. If no monitor was injected (e.g. in unit tests that don't
         // care), the clock-driven timer still fires as the safety net.
         connectivity?.onBecameReachable = { [weak self] in
-            Task { await self?.handleConnectivityReturned() }
+            Task { [weak self] in await self?.scheduleLifecycleWork { await $0.handleConnectivityReturned() } }
         }
         connectivity?.start()
 
@@ -171,28 +202,29 @@ public actor VibeTracerCore {
         emitSessionRolloverIfNeeded()
     }
 
+    /// Advance the session tracker by one lifecycle tick and enqueue the
+    /// resulting analytics events (`$session_end`, `$session_start`, or
+    /// neither, depending on whether the session expired and/or was minted).
+    ///
+    /// Call sites: ``start()`` (launch) and ``handleActivate()`` (foreground).
+    /// The rollover decision is atomic inside `SessionTracker.rollover`, so
+    /// back-to-back calls within the idle window produce zero events on the
+    /// second call — this is the v1.1.1 fix for spurious `$session_start`
+    /// emission on every foreground.
     private func emitSessionRolloverIfNeeded() {
-        if let expired = sessionTracker.takeExpiredPriorSession() {
-            let endEvent = AnalyticsEvent(
-                event: "$session_end",
-                deviceId: deviceId.uuidString,
-                userId: userIdStore.current,
-                sessionId: expired.sessionId.uuidString,
-                timestamp: expired.lastActivityAt,
-                properties: [:]
-            )
-            enqueueInternal(.track(endEvent))
+        let result = sessionTracker.rollover(now: clock.now())
+        let events = sessionEmitter.eventsFor(rollover: result)
+        for event in events {
+            enqueueInternal(.track(event))
         }
-        let newSessionId = sessionTracker.startSessionIfNeeded()
-        let startEvent = AnalyticsEvent(
-            event: "$session_start",
-            deviceId: deviceId.uuidString,
-            userId: userIdStore.current,
-            sessionId: newSessionId.uuidString,
-            timestamp: clock.now(),
-            properties: [:]
-        )
-        enqueueInternal(.track(startEvent))
+        if result.wasMinted {
+            currentSessionId = result.currentSessionId
+        } else {
+            // Even without a mint, the live session id may have been adopted
+            // from a fresh persisted-prior — keep the cache in sync with the
+            // tracker's authoritative view.
+            currentSessionId = result.currentSessionId
+        }
     }
 
     // MARK: - Public API
@@ -212,8 +244,24 @@ public actor VibeTracerCore {
             logger.warning("Dropped unencodable property keys: \(droppedKeys.joined(separator: ", "), privacy: .public) for event \(event, privacy: .public)")
         }
 
+        // Bump the idle-window timestamp on every track — idle-timeout
+        // accuracy depends on it. One UserDefaults write; O(1).
         sessionTracker.noteActivity()
-        let sid = sessionTracker.startSessionIfNeeded()
+
+        // Use the cached session id when we have one. This avoids a second
+        // UserDefaults read per track (the old hot path called
+        // `startSessionIfNeeded()` which read the persisted session id from
+        // disk every time). If the cache is nil (e.g. `track()` beat `start()`
+        // to the mailbox), fall back to a real rollover to be safe.
+        let sid: UUID
+        if let cached = currentSessionId {
+            sid = cached
+        } else {
+            let result = sessionTracker.rollover(now: clock.now())
+            sid = result.currentSessionId
+            currentSessionId = sid
+        }
+
         let ev = AnalyticsEvent(
             event: event,
             deviceId: deviceId.uuidString,
@@ -233,11 +281,12 @@ public actor VibeTracerCore {
         userIdStore.reset()
     }
 
-    /// Flushes the queue now and waits for the mailbox to drain. Internally
-    /// synthesizes an `.appBackgrounded` signal which the reducer treats as an
-    /// immediate-flush trigger from `.queuing`.
+    /// Flushes the queue now and waits for the mailbox to drain. Synthesizes
+    /// a `.flushRequested` signal, which the reducer treats as an immediate-
+    /// flush trigger from `.queuing` AND forces an early retry from `.backoff`
+    /// (unlike `.appBackgrounded`, which respects the backoff timer).
     public func flush() async {
-        enqueueInternal(.appBackgrounded)
+        enqueueInternal(.flushRequested)
         await _waitForIdle()
     }
 
@@ -280,7 +329,28 @@ public actor VibeTracerCore {
     /// the public API which is already actor-isolated.
     private func enqueueInternal(_ signal: QueueSignal) {
         pendingSignalCount += 1
+        // Diagnostic: warn if queue depth grows unexpectedly. Does not apply
+        // backpressure (intentional — `track()` is sync fire-and-forget per
+        // design). A growing queue indicates either the drain task is stuck
+        // or the host app is firing events faster than we can process.
+        let depth = pendingSignalCount
+        if depth == 100 || depth == 1_000 || depth == 10_000 {
+            logger.warning("VibeTracer mailbox depth at \(depth, privacy: .public); drain may be slow or stuck")
+        }
         mailboxContinuation.yield(signal)
+    }
+
+    /// Lifecycle callback coalescer. Called from the outer `Task { }` wrappers
+    /// in ``start()``. Cancels the prior lifecycle Task (if any) and spawns a
+    /// new one running the given body. Under rapid foreground/background
+    /// cycling this caps the number of concurrent lifecycle-driven Tasks at 1
+    /// rather than letting them pile up in the cooperative pool.
+    private func scheduleLifecycleWork(_ body: @escaping @Sendable (VibeTracerCore) async -> Void) {
+        lifecycleTask?.cancel()
+        lifecycleTask = Task { [weak self] in
+            guard let self else { return }
+            await body(self)
+        }
     }
 
     private func decrementPending() {
@@ -290,16 +360,18 @@ public actor VibeTracerCore {
     /// Internal: wait until the mailbox has drained and no follow-up signals
     /// are scheduled. Used by ``flush()`` and by tests to synchronize.
     ///
-    /// Yields the cooperative pool (no `Task.sleep`) so tests run in
-    /// deterministic zero time. The double-drain check accounts for signals
-    /// that may be enqueued from a scheduled `Task { ... }` block fired by
-    /// the TestClock's synchronous `advance(by:)` — those tasks hop onto the
-    /// cooperative pool and show up as pending only after a couple of yields.
+    /// Implementation: polls with 500µs `Task.sleep` ticks (not `Task.yield()`,
+    /// which can starve the separate drain `Task` when the caller and the
+    /// drain share the cooperative pool). Requires 4 consecutive idle ticks
+    /// before returning, to absorb signals that were enqueued from a Task
+    /// scheduled by `TestClock.advance(by:)` but hadn't yet hopped onto the
+    /// pool. Worst-case ceiling of 10 seconds (20,000 × 500µs) before it
+    /// logs-and-aborts to avoid deadlocking a test.
+    ///
+    /// Consequence: every `flush()` call has a ~2ms floor (4 × 500µs stability
+    /// window). Acceptable for tests; production `flush()` callers should not
+    /// be on a hot path.
     internal func _waitForIdle() async {
-        // Sleep briefly (not `Task.yield()`): `yield` can starve the drain
-        // task under heavy contention because it re-enters this actor-
-        // isolated loop on the same cooperative thread pool before the
-        // separate drain `Task` gets scheduled.
         var stableTicks = 0
         let tickNanos: UInt64 = 500_000 // 0.5 ms
         let maxIterations = 20_000       // 10 seconds worst case
