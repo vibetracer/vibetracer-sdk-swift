@@ -52,6 +52,7 @@ public actor VibeTracerCore {
     private let network: Network
     private let clock: Clock
     private let lifecycle: LifecycleObserver
+    private let connectivity: ConnectivityMonitor?
     private let debug: Bool
     private let logger: Logger
     private let batchLimit: Int
@@ -87,6 +88,7 @@ public actor VibeTracerCore {
         network: Network,
         clock: Clock,
         lifecycle: LifecycleObserver,
+        connectivity: ConnectivityMonitor? = nil,
         debug: Bool,
         logger: Logger,
         batchLimit: Int = 20,
@@ -99,6 +101,7 @@ public actor VibeTracerCore {
         self.network = network
         self.clock = clock
         self.lifecycle = lifecycle
+        self.connectivity = connectivity
         self.debug = debug
         self.logger = logger
         self.batchLimit = batchLimit
@@ -134,6 +137,14 @@ public actor VibeTracerCore {
             Task { await self?.handleTerminate() }
         }
         lifecycle.start()
+
+        // Connectivity monitor: on offline→online edge, wake out of backoff
+        // early. If no monitor was injected (e.g. in unit tests that don't
+        // care), the clock-driven timer still fires as the safety net.
+        connectivity?.onBecameReachable = { [weak self] in
+            Task { await self?.handleConnectivityReturned() }
+        }
+        connectivity?.start()
 
         // Spin up the drain task first so signals we enqueue in the rest of
         // start() begin flowing without waiting on an external Task scheduler.
@@ -248,6 +259,19 @@ public actor VibeTracerCore {
 
     private func handleTerminate() {
         enqueueInternal(.appTerminating)
+    }
+
+    /// Called on the offline→online edge from the ``ConnectivityMonitor``.
+    /// Only meaningful when we're currently sitting in `.backoff` — in any
+    /// other state the clock timer is either serving a different purpose
+    /// (`.queuing`'s 5s flush timer) or not running at all, and waking early
+    /// would be noise. Cancel the active backoff timer and advance the FSM
+    /// with `.backoffExpired` to retry the flush immediately.
+    private func handleConnectivityReturned() {
+        if case .backoff = state {
+            cancelActiveTimer()
+            enqueueInternal(.backoffExpired)
+        }
     }
 
     // MARK: - Mailbox

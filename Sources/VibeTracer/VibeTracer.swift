@@ -87,6 +87,7 @@ public enum VibeTracer {
             session: urlSession
         )
         let lifecycle = makeLifecycleObserver()
+        let connectivity = SystemConnectivityMonitor()
         let initiallyDisabled = defaults.bool(forKey: "com.vibetracer.disabled")
 
         lock.lock()
@@ -103,6 +104,7 @@ public enum VibeTracer {
             network: network,
             clock: clock,
             lifecycle: lifecycle,
+            connectivity: connectivity,
             debug: debug,
             logger: logger,
             initiallyDisabled: initiallyDisabled
