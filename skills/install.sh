@@ -10,6 +10,7 @@ BASE_URL="https://vibetracer.xyz/sdk/swift"
 TOOL=""
 TARGET=""
 VERSION=""
+PROJECT=""
 UNINSTALL=0
 
 usage() {
@@ -17,12 +18,15 @@ usage() {
 Vibe Tracer Swift skill pack installer.
 
 Usage:
-  install.sh [--tool <name>] [--target <path>] [--version <ref>] [--uninstall] [--help]
+  install.sh [--tool <name>] [--target <path>] [--version <ref>] [--project <slug>] [--uninstall] [--help]
 
 Flags:
   --tool <name>     One of: claude (default), cursor, windsurf, codex, all.
   --target <path>   Custom absolute directory. Mutually exclusive with --tool.
   --version <ref>   Git ref (tag or branch). Defaults to main.
+  --project <slug>  Project slug from your dashboard URL. When set, the
+                    closing prompt includes it so the agent can build the
+                    correct API-key URL without asking which project.
   --uninstall       Remove all vibe-tracer-swift-* skills from the resolved target(s).
   --help            Show this help.
 
@@ -40,11 +44,23 @@ while [ $# -gt 0 ]; do
     --tool) TOOL="${2:-}"; shift 2 ;;
     --target) TARGET="${2:-}"; shift 2 ;;
     --version) VERSION="${2:-}"; shift 2 ;;
+    --project) PROJECT="${2:-}"; shift 2 ;;
     --uninstall) UNINSTALL=1; shift ;;
     --help|-h) usage; exit 0 ;;
     *) echo "error: unknown flag: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+# Matches the slug shape produced by the dashboard (`slugify` + 4-hex suffix):
+# lowercase alphanumerics and hyphens, starting with an alphanumeric. Length
+# bound keeps the echo line tidy and prevents a pathological slug from
+# bloating the prompt text that ends up pasted into the agent.
+if [ -n "$PROJECT" ]; then
+  if ! printf '%s' "$PROJECT" | grep -Eq '^[a-z0-9][a-z0-9-]{0,63}$'; then
+    echo "error: --project must match [a-z0-9][a-z0-9-]{0,63} (got: $PROJECT)" >&2
+    exit 2
+  fi
+fi
 
 if [ -n "$TOOL" ] && [ -n "$TARGET" ]; then
   echo "error: --tool and --target are mutually exclusive" >&2; exit 2
@@ -212,6 +228,14 @@ for t in "${TARGETS[@]}"; do
     fi
     echo ""
     echo "To get started, tell your AI:"
-    echo "    \"Add vibe tracer to my app and help me figure out what to track\""
+    # We embed the slug in the agent prompt itself — not a separate "API key
+    # URL" line — so the dashboard remains the single source of truth for
+    # the URL template. The install skill already knows how to map
+    # "my project slug is X" → the correct settings URL.
+    if [ -n "$PROJECT" ]; then
+      echo "    \"Add vibe tracer to my app and help me figure out what to track. My project slug is $PROJECT.\""
+    else
+      echo "    \"Add vibe tracer to my app and help me figure out what to track\""
+    fi
   fi
 done
