@@ -6,7 +6,15 @@ import Foundation
 /// It is cleared only when the user deletes the app (or the UserDefaults suite
 /// is reset), which matches the semantics most analytics backends expect from
 /// a "device id".
-public final class DeviceIdStore: Sendable {
+///
+/// Thread-safe because `UserDefaults` is documented as thread-safe for
+/// concurrent reads/writes by Apple (Foundation). The `Sendable` conformance
+/// is `@unchecked` only because `UserDefaults` is imported from Objective-C
+/// and predates Swift concurrency — it doesn't declare `Sendable`, but all
+/// operations on it are thread-safe. Under Swift 6 strict concurrency this
+/// is the correct annotation; the previous `Sendable` (checked) form was a
+/// compiler warning today and a hard error under the Swift 6 language mode.
+public final class DeviceIdStore: @unchecked Sendable {
     private static let key = "com.vibetracer.deviceId"
     private let defaults: UserDefaults
 

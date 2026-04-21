@@ -6,7 +6,15 @@ import Foundation
 /// `identify(userId:)` when they know who the user is, and `reset()` on
 /// logout. The store survives app relaunches so we can continue to attribute
 /// events to the right user after a process restart.
-public final class UserIdStore: Sendable {
+///
+/// Thread-safe because `UserDefaults` is documented as thread-safe for
+/// concurrent reads/writes by Apple (Foundation). The `Sendable` conformance
+/// is `@unchecked` only because `UserDefaults` is imported from Objective-C
+/// and predates Swift concurrency — it doesn't declare `Sendable`, but all
+/// operations on it are thread-safe. Under Swift 6 strict concurrency this
+/// is the correct annotation; the previous `Sendable` (checked) form was a
+/// compiler warning today and a hard error under the Swift 6 language mode.
+public final class UserIdStore: @unchecked Sendable {
     private static let key = "com.vibetracer.userId"
     private let defaults: UserDefaults
 
