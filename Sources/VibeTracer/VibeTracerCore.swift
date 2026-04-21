@@ -57,6 +57,8 @@ public actor VibeTracerCore {
     private let debug: Bool
     private let logger: Logger
     private let batchLimit: Int
+    private let deviceContext: DeviceContext
+    private let deviceContextEncoded: [String: AnyCodable]
 
     // MARK: - FSM state
 
@@ -115,7 +117,8 @@ public actor VibeTracerCore {
         debug: Bool,
         logger: Logger,
         batchLimit: Int = 20,
-        initiallyDisabled: Bool = false
+        initiallyDisabled: Bool = false,
+        deviceContext: DeviceContext = .current()
     ) {
         self.deviceId = deviceId
         self.userIdStore = userIdStore
@@ -134,6 +137,12 @@ public actor VibeTracerCore {
         self.logger = logger
         self.batchLimit = batchLimit
         self.disabled = initiallyDisabled
+        self.deviceContext = deviceContext
+        // Pre-encode once so we don't pay AnyCodable conversion per track().
+        // All values are strings so encoding is infallible.
+        self.deviceContextEncoded = deviceContext.properties.mapValues {
+            (try? AnyCodable($0)) ?? AnyCodable(storage: .string($0))
+        }
 
         var cont: AsyncStream<QueueSignal>.Continuation!
         self.mailbox = AsyncStream { cont = $0 }
@@ -236,13 +245,25 @@ public actor VibeTracerCore {
         // rejects so one bad property can't black-hole the whole event.
         var encoded: [String: AnyCodable] = [:]
         var droppedKeys: [String] = []
+        var shadowedKeys: [String] = []
         for (k, v) in properties ?? [:] {
+            if DeviceContext.reservedKeys.contains(k) {
+                // System keys are mandatory and always win — see DeviceContext.
+                shadowedKeys.append(k)
+                continue
+            }
             do { encoded[k] = try AnyCodable(v) }
             catch { droppedKeys.append(k) }
         }
         if !droppedKeys.isEmpty {
             logger.warning("Dropped unencodable property keys: \(droppedKeys.joined(separator: ", "), privacy: .public) for event \(event, privacy: .public)")
         }
+        if !shadowedKeys.isEmpty {
+            logger.warning("Ignored user-supplied reserved keys: \(shadowedKeys.joined(separator: ", "), privacy: .public) for event \(event, privacy: .public) (system values win)")
+        }
+        // Merge system context last — overwrites any reserved key that slipped
+        // through (defensive; the loop above already filters them out).
+        for (k, v) in deviceContextEncoded { encoded[k] = v }
 
         // Bump the idle-window timestamp on every track — idle-timeout
         // accuracy depends on it. One UserDefaults write; O(1).

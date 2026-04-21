@@ -67,7 +67,8 @@ final class VibeTracerCoreTests: XCTestCase {
         idleTimeout: Duration = .seconds(30 * 60),
         initiallyDisabled: Bool = false,
         prePopulatedDisk: [AnalyticsEvent] = [],
-        initialSessionInDefaults: (id: UUID, lastActivity: Date)? = nil
+        initialSessionInDefaults: (id: UUID, lastActivity: Date)? = nil,
+        deviceContext: DeviceContext = .current()
     ) async -> (Harness, URLSession) {
         let suiteName = UUID().uuidString
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -111,7 +112,8 @@ final class VibeTracerCoreTests: XCTestCase {
             debug: debug,
             logger: logger,
             batchLimit: batchLimit,
-            initiallyDisabled: initiallyDisabled
+            initiallyDisabled: initiallyDisabled,
+            deviceContext: deviceContext
         )
 
         let harness = Harness(
@@ -664,5 +666,92 @@ final class VibeTracerCoreTests: XCTestCase {
             }
         }
         XCTAssertTrue(saw, "mixed event should have been sent")
+    }
+
+    /// 21 — DeviceContext is merged into every tracked event: the six
+    /// `$`-prefixed keys appear in the POSTed body with the injected values.
+    func test_deviceContext_mergedIntoEveryEvent() async throws {
+        let ctx = DeviceContext(
+            appVersion: "1.4.2",
+            appBuild: "842",
+            buildType: "testflight",
+            deviceType: "device",
+            osName: "iOS",
+            osVersion: "17.2.1"
+        )
+        let (h, _) = await makeHarness(deviceContext: ctx)
+        let recorder = RequestRecorder()
+        MockURLProtocol.handler = { req in
+            recorder.record(req)
+            return (HTTPURLResponse(url: req.url!, statusCode: 202, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        await h.core.start()
+        await settle(h.core)
+        await h.core.track(event: "tagged", properties: ["user_key": "u"])
+        await settle(h.core)
+        h.clock.advance(by: .seconds(5))
+        await settle(h.core)
+
+        var saw = false
+        for r in recorder.all() {
+            guard let json = try? JSONSerialization.jsonObject(with: r.body) else { continue }
+            let arr: [[String: Any]] = (json as? [[String: Any]]) ?? [(json as? [String: Any])].compactMap { $0 }
+            for d in arr where (d["event"] as? String) == "tagged" {
+                saw = true
+                let props = d["properties"] as? [String: Any] ?? [:]
+                XCTAssertEqual(props["$app_version"] as? String, "1.4.2")
+                XCTAssertEqual(props["$app_build"] as? String, "842")
+                XCTAssertEqual(props["$build_type"] as? String, "testflight")
+                XCTAssertEqual(props["$device_type"] as? String, "device")
+                XCTAssertEqual(props["$os_name"] as? String, "iOS")
+                XCTAssertEqual(props["$os_version"] as? String, "17.2.1")
+                XCTAssertEqual(props["user_key"] as? String, "u")
+            }
+        }
+        XCTAssertTrue(saw, "tagged event should have been sent")
+    }
+
+    /// 22 — System-owned reserved keys always win over user-supplied ones.
+    /// A caller that puts `$app_version: "fake"` in properties must not be
+    /// able to spoof the true app version on the wire.
+    func test_deviceContext_userReservedKeys_areShadowed() async throws {
+        let ctx = DeviceContext(
+            appVersion: "real-1.0",
+            appBuild: "1",
+            buildType: "appstore",
+            deviceType: "device",
+            osName: "iOS",
+            osVersion: "17.0.0"
+        )
+        let (h, _) = await makeHarness(deviceContext: ctx)
+        let recorder = RequestRecorder()
+        MockURLProtocol.handler = { req in
+            recorder.record(req)
+            return (HTTPURLResponse(url: req.url!, statusCode: 202, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        await h.core.start()
+        await settle(h.core)
+        await h.core.track(event: "spoof", properties: [
+            "$app_version": "fake-9.9",
+            "$build_type": "debug",
+            "legit": "ok",
+        ])
+        await settle(h.core)
+        h.clock.advance(by: .seconds(5))
+        await settle(h.core)
+
+        var saw = false
+        for r in recorder.all() {
+            guard let json = try? JSONSerialization.jsonObject(with: r.body) else { continue }
+            let arr: [[String: Any]] = (json as? [[String: Any]]) ?? [(json as? [String: Any])].compactMap { $0 }
+            for d in arr where (d["event"] as? String) == "spoof" {
+                saw = true
+                let props = d["properties"] as? [String: Any] ?? [:]
+                XCTAssertEqual(props["$app_version"] as? String, "real-1.0")
+                XCTAssertEqual(props["$build_type"] as? String, "appstore")
+                XCTAssertEqual(props["legit"] as? String, "ok")
+            }
+        }
+        XCTAssertTrue(saw, "spoof event should have been sent")
     }
 }

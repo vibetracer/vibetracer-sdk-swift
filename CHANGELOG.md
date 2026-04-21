@@ -1,5 +1,54 @@
 # Changelog
 
+## [2.2.0] - 2026-04-21
+
+### Added
+
+- **Mandatory device/build context on every event.** Six `$`-prefixed keys are
+  now merged into the `properties` dict of every tracked event (including the
+  auto-emitted `$session_start` / `$session_end`):
+  - `$app_version` — `CFBundleShortVersionString` (e.g. `"1.4.2"`)
+  - `$app_build` — `CFBundleVersion` (e.g. `"842"`)
+  - `$build_type` — one of `debug`, `testflight`, `appstore`, `development`
+  - `$device_type` — one of `simulator`, `mac_catalyst`, `ios_on_mac`, `mac`, `device`
+  - `$os_name` — `iOS`, `macOS`, `tvOS`, `watchOS`, `visionOS`
+  - `$os_version` — dotted `major.minor.patch` from `ProcessInfo`
+- **Build-type detection** combines `#if DEBUG` (catches Xcode-run builds)
+  with Apple's `appStoreReceiptURL` filename check (`sandboxReceipt` →
+  TestFlight; other receipt on disk → App Store; missing → `development`
+  for enterprise / ad-hoc / direct-distributed macOS builds).
+- **Public `DeviceContext` type** (`Sources/VibeTracer/Platform/DeviceContext.swift`)
+  with a `.current()` factory and a six-field initializer for tests. Apps
+  shouldn't need to touch this — `VibeTracer.configure()` builds it
+  automatically — but it's public so tests and hosted diagnostics can inject
+  fixed values.
+
+### Why
+
+Every Vibe Tracer app previously had to add build/OS/app-version properties
+by hand, which (a) almost nobody did, (b) produced inconsistent key names
+across apps (`appVersion` vs `app_version` vs `version`), and (c) made
+cross-app funnels impossible to filter by build type. Making these mandatory
+defaults at the SDK level eliminates the bespoke boilerplate and guarantees
+every event in the warehouse can be split by `$build_type` / `$device_type`
+out of the box.
+
+### Contract
+
+- System keys always win over user-supplied properties with the same name.
+  A caller passing `properties: ["$app_version": "fake"]` has that key
+  dropped (logged at warn level) and the real value emitted. Mandatory =
+  mandatory.
+- Values are computed once at `configure()` — they're immutable for the
+  process lifetime — so per-event cost is a dictionary merge, not a
+  `Bundle` / `ProcessInfo` read.
+
+### Notes
+
+- No breaking API changes. Existing `track()` call sites are untouched.
+- `sdk-version` frontmatter in all 5 skills bumped to `2.2.0`.
+- Podspec bumped to match.
+
 ## [2.1.0] - 2026-04-22
 
 ### Added

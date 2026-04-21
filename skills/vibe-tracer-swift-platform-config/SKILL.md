@@ -2,7 +2,7 @@
 name: vibe-tracer-swift-platform-config
 description: Use when the user is building the Vibe Tracer-integrated app for macOS, Mac Catalyst, or "Designed for iPad" on Mac; OR when events work on iOS but not on macOS/Catalyst; OR user asks about App Transport Security, entitlements, sandboxing, or Local Network permission.
 version: 2026-04-21
-sdk-version: 2.1.0
+sdk-version: 2.2.0
 ---
 
 # Platform Configuration — ATS, Entitlements, Sandbox

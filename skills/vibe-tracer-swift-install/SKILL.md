@@ -2,7 +2,7 @@
 name: vibe-tracer-swift-install
 description: Use when the user explicitly asks to integrate, install, or configure Vibe Tracer in a Swift app, OR when `vibetracer-sdk-swift` is being added to their Package.swift or Podfile for the first time. Do NOT use for generic "add analytics" requests when the user has not picked a vendor.
 version: 2026-04-21
-sdk-version: 2.1.0
+sdk-version: 2.2.0
 ---
 
 # Installing Vibe Tracer in a Swift App

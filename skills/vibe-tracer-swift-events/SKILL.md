@@ -2,7 +2,7 @@
 name: vibe-tracer-swift-events
 description: Use when the user asks what events to track, is designing their initial tracking plan, or wants review of existing track() calls in a Swift app that has `vibetracer-sdk-swift` as a dependency. Do NOT use when the user has not picked an analytics vendor — decline and ask. Do NOT use as generic "analytics best practices" reference for other SDKs.
 version: 2026-04-21
-sdk-version: 2.1.0
+sdk-version: 2.2.0
 ---
 
 # Tracking Events That Answer Questions
