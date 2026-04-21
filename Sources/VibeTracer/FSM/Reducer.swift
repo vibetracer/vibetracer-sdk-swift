@@ -27,7 +27,8 @@ public func reduce(
          (.empty, .sendOk),
          (.empty, .sendFailed),
          (.empty, .appBackgrounded),
-         (.empty, .appTerminating):
+         (.empty, .appTerminating),
+         (.empty, .flushRequested):
         // Nothing in flight and nothing queued — every non-track signal is a no-op.
         // Explicit cases rather than a catchall so the exhaustiveness check catches
         // new signals at compile time.
@@ -43,6 +44,11 @@ public func reduce(
     case (.queuing, .batchFull):
         return (.flushing(batch: currentBatch), [.cancelTimer, .httpPost(batch: currentBatch)])
     case (.queuing, .appBackgrounded):
+        if currentBatch.isEmpty { return (.queuing, []) }
+        return (.flushing(batch: currentBatch), [.cancelTimer, .httpPost(batch: currentBatch)])
+    case (.queuing, .flushRequested):
+        // User-initiated flush from `VibeTracer.flush()`. Same shape as
+        // appBackgrounded from .queuing — flush now if there's anything to send.
         if currentBatch.isEmpty { return (.queuing, []) }
         return (.flushing(batch: currentBatch), [.cancelTimer, .httpPost(batch: currentBatch)])
     case (.queuing, .appTerminating):
@@ -98,7 +104,8 @@ public func reduce(
     case (.flushing, .track(let e)):
         // Arrives while a flush is in-flight; persist so we pick it up after.
         return (state, [.persistToDisk(events: [e])])
-    case (.flushing, .appBackgrounded):
+    case (.flushing, .appBackgrounded),
+         (.flushing, .flushRequested):
         return (state, [])   // flush already running; let it complete
     case (.flushing, .timerFired),
          (.flushing, .batchFull),
@@ -122,6 +129,11 @@ public func reduce(
         ])
     case (.backoff, .track(let e)):
         return (state, [.persistToDisk(events: [e])])
+    case (.backoff(_, let batch), .flushRequested):
+        // User-initiated flush overrides the backoff timer — cancel it and
+        // retry the pending batch immediately. This is intentionally more
+        // aggressive than appBackgrounded, which respects the backoff.
+        return (.flushing(batch: batch), [.cancelTimer, .httpPost(batch: batch)])
     case (.backoff, .timerFired),
          (.backoff, .batchFull),
          (.backoff, .sendOk),

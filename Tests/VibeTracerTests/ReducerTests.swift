@@ -197,6 +197,53 @@ final class ReducerTests: XCTestCase {
         XCTAssertEqual(computeBackoff(attempt: 3, rng: 1.2), .milliseconds(4800))
     }
 
+    // MARK: - flushRequested transitions (v1.1.1)
+
+    func test_empty_plus_flushRequested_isNoOp() {
+        let (s, fx) = reduce(.empty, .flushRequested, batchLimit: 20)
+        XCTAssertEqual(s, .empty)
+        XCTAssertTrue(fx.isEmpty)
+    }
+
+    func test_queuing_plus_flushRequested_emptyBatch_isNoOp() {
+        let (s, fx) = reduce(.queuing, .flushRequested, batchLimit: 20, currentBatch: [])
+        XCTAssertEqual(s, .queuing)
+        XCTAssertTrue(fx.isEmpty)
+    }
+
+    func test_queuing_plus_flushRequested_nonemptyBatch_flushesImmediately() {
+        let batch = [makeEvent("a"), makeEvent("b")]
+        let (s, fx) = reduce(.queuing, .flushRequested, batchLimit: 20, currentBatch: batch)
+        XCTAssertEqual(s, .flushing(batch: batch))
+        XCTAssertEqual(fx, [.cancelTimer, .httpPost(batch: batch)])
+    }
+
+    func test_flushing_plus_flushRequested_staysFlushing() {
+        let inFlight = [makeEvent("a")]
+        let (s, fx) = reduce(.flushing(batch: inFlight), .flushRequested, batchLimit: 20)
+        XCTAssertEqual(s, .flushing(batch: inFlight))
+        XCTAssertTrue(fx.isEmpty)
+    }
+
+    func test_backoff_plus_flushRequested_forcesImmediateRetry() {
+        let batch = [makeEvent("pending")]
+        let (s, fx) = reduce(.backoff(attempt: 3, pendingBatch: batch),
+                             .flushRequested, batchLimit: 20)
+        XCTAssertEqual(s, .flushing(batch: batch))
+        XCTAssertEqual(fx, [.cancelTimer, .httpPost(batch: batch)])
+    }
+
+    /// Guard against regressing the bug that motivated `.flushRequested`:
+    /// `.appBackgrounded` must NOT force a retry from `.backoff` (the OS is
+    /// suspending us and the backoff timer is already handling this).
+    func test_backoff_plus_appBackgrounded_doesNotForceRetry() {
+        let batch = [makeEvent()]
+        let (s, fx) = reduce(.backoff(attempt: 2, pendingBatch: batch),
+                             .appBackgrounded, batchLimit: 20)
+        XCTAssertEqual(s, .backoff(attempt: 2, pendingBatch: batch))
+        XCTAssertTrue(fx.isEmpty)
+    }
+
     func test_computeBackoff_jitterBounded_monotonic() {
         for attempt in 1...10 {
             let dLow = computeBackoff(attempt: attempt, rng: 0.8)
