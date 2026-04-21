@@ -212,6 +212,6 @@ for t in "${TARGETS[@]}"; do
     fi
     echo ""
     echo "To get started, tell your AI:"
-    echo "    \"add vibe tracer to my app and help me figure out what to track\""
+    echo "    \"Add vibe tracer to my app and help me figure out what to track\""
   fi
 done

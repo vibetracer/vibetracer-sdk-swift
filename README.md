@@ -15,7 +15,7 @@ Agent-native analytics SDK for Apple platforms. Install the [skill pack](skills/
 curl -fsSL https://vibetracer.xyz/sdk/swift/install.sh | bash
 ```
 
-Installs all five Vibe Tracer Swift skills into `~/.claude/skills/`. Then in Claude Code: `"add vibe tracer to my app and help me figure out what to track"`. The AI does the rest.
+Installs all five Vibe Tracer Swift skills into `~/.claude/skills/`. Then in Claude Code: `"Add vibe tracer to my app and help me figure out what to track"`. The AI does the rest.
 
 ### Other agent tools
 
