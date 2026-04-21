@@ -156,6 +156,29 @@ case_tool_all_detects_codex() {
   assert '[ -f "$FAKE_HOME/.codex/skills/vibe-tracer-swift-install/SKILL.md" ]' "--tool all wrote skill files to codex"
 }
 
+case_project_slug_appears_in_closing_prompt() {
+  local out
+  out=$(run_install --tool codex --project acme-a1b2 2>&1)
+  assert 'echo "$out" | grep -q "My project slug is acme-a1b2"' "closing prompt embeds slug"
+  # The URL template is the skill's responsibility; install.sh must not
+  # quote it directly (single source of truth).
+  assert '! echo "$out" | grep -q "vibetracer.xyz/projects/"' "install.sh does not print the settings URL"
+}
+
+case_no_project_slug_uses_generic_prompt() {
+  local out
+  out=$(run_install --tool codex 2>&1)
+  assert 'echo "$out" | grep -q "help me figure out what to track\""' "generic prompt rendered when no slug"
+  assert '! echo "$out" | grep -q "My project slug is"' "no slug line when --project omitted"
+}
+
+case_invalid_project_slug_rejected() {
+  local out rc=0
+  out=$(run_install --tool codex --project 'Bad Slug!' 2>&1) || rc=$?
+  assert "[ '$rc' != '0' ]" "invalid slug exits non-zero (got $rc)"
+  assert 'echo "$out" | grep -q "--project must match"' "error names the constraint"
+}
+
 # ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
@@ -166,6 +189,9 @@ test_case "append preserves user content"    case_append_preserves_user_content
 test_case "uninstall empty removes file"     case_uninstall_empty_removes_file
 test_case "uninstall preserves user content" case_uninstall_preserves_user
 test_case "--tool all detects codex"         case_tool_all_detects_codex
+test_case "--project slug in closing prompt" case_project_slug_appears_in_closing_prompt
+test_case "no --project stays generic"       case_no_project_slug_uses_generic_prompt
+test_case "--project invalid slug rejected"  case_invalid_project_slug_rejected
 
 echo ""
 echo "== summary =="
