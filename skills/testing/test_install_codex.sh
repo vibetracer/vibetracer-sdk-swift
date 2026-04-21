@@ -176,7 +176,7 @@ case_invalid_project_slug_rejected() {
   local out rc=0
   out=$(run_install --tool codex --project 'Bad Slug!' 2>&1) || rc=$?
   assert "[ '$rc' != '0' ]" "invalid slug exits non-zero (got $rc)"
-  assert 'echo "$out" | grep -q "--project must match"' "error names the constraint"
+  assert 'echo "$out" | grep -qe "--project must match"' "error names the constraint"
 }
 
 # ---------------------------------------------------------------------------
