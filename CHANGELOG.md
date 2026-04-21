@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.0.0] - 2026-04-21
+
+### Breaking — docs distribution only (no SDK API changes)
+
+- Root `SKILL.md` removed. Skills now live under `skills/vibe-tracer-swift-*/SKILL.md`
+  and install as a pack. The old one-liner install (`curl ... skill.md > SKILL.md`)
+  no longer works — no legacy URL is preserved.
+- New install mechanism: a single shell script that installs all skills into the
+  user's agent-tool directory (Claude Code, Cursor, Windsurf, or a custom target).
+  See README for the new one-liner.
+
+### Changed
+
+- SKILL.md split into five focused skills, each with a narrow trigger and
+  discipline-enforcing content (modeled on the superpowers pattern):
+  - `vibe-tracer-swift-install` — first-time integration
+  - `vibe-tracer-swift-events` — what to track (business advisory)
+  - `vibe-tracer-swift-identity` — login/logout patterns
+  - `vibe-tracer-swift-debug` — troubleshooting
+  - `vibe-tracer-swift-platform-config` — ATS, macOS sandbox, Mac Catalyst
+
+### No SDK code changes
+
+The Swift package itself is identical to v1.1.3. Only documentation distribution
+changed. App builds against `from: "1.1.0"` resolve to 2.0.0 automatically.
+
 ## [1.1.3] - 2026-04-21
 
 ### Docs

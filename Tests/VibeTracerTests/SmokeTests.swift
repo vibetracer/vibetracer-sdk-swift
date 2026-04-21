@@ -3,6 +3,6 @@ import XCTest
 
 final class SmokeTests: XCTestCase {
     func testModuleImports() {
-        XCTAssertEqual(VibeTracer.version, "1.1.3")
+        XCTAssertEqual(VibeTracer.version, "2.0.0")
     }
 }

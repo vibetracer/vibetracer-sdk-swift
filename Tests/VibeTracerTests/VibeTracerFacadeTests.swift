@@ -95,8 +95,8 @@ final class VibeTracerFacadeTests: XCTestCase {
     }
 
     /// 3 — `version` is the expected semver.
-    func test_version_isOneDotOneDotThree() {
-        XCTAssertEqual(VibeTracer.version, "1.1.3")
+    func test_version_isTwoDotZeroDotZero() {
+        XCTAssertEqual(VibeTracer.version, "2.0.0")
     }
 
     // MARK: - Helpers
