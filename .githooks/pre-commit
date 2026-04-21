@@ -10,3 +10,4 @@
 set -e
 
 bash scripts/check-version-bump.sh
+bash scripts/check-skill-sync.sh
