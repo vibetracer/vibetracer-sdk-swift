@@ -40,17 +40,18 @@ public func reduce(
         return (.queuing, [.persistToDisk(events: [e])])
     case (.queuing, .timerFired):
         if currentBatch.isEmpty { return (.empty, []) }
-        return (.flushing(batch: currentBatch), [.httpPost(batch: currentBatch)])
+        // First attempt for this batch; attempt counter starts at 1.
+        return (.flushing(batch: currentBatch, attempt: 1), [.httpPost(batch: currentBatch)])
     case (.queuing, .batchFull):
-        return (.flushing(batch: currentBatch), [.cancelTimer, .httpPost(batch: currentBatch)])
+        return (.flushing(batch: currentBatch, attempt: 1), [.cancelTimer, .httpPost(batch: currentBatch)])
     case (.queuing, .appBackgrounded):
         if currentBatch.isEmpty { return (.queuing, []) }
-        return (.flushing(batch: currentBatch), [.cancelTimer, .httpPost(batch: currentBatch)])
+        return (.flushing(batch: currentBatch, attempt: 1), [.cancelTimer, .httpPost(batch: currentBatch)])
     case (.queuing, .flushRequested):
         // User-initiated flush from `VibeTracer.flush()`. Same shape as
         // appBackgrounded from .queuing — flush now if there's anything to send.
         if currentBatch.isEmpty { return (.queuing, []) }
-        return (.flushing(batch: currentBatch), [.cancelTimer, .httpPost(batch: currentBatch)])
+        return (.flushing(batch: currentBatch, attempt: 1), [.cancelTimer, .httpPost(batch: currentBatch)])
     case (.queuing, .appTerminating):
         return (.queuing, [])   // persisted already; next launch resumes
     case (.queuing, .sendOk),
@@ -60,7 +61,7 @@ public func reduce(
         return (.queuing, [])
 
     // MARK: — flushing
-    case (.flushing(let inFlight), .sendOk(let batch)):
+    case (.flushing(let inFlight, _), .sendOk(let batch)):
         // Identity equality, not count equality — the plan's original
         // `inFlight.count == batch.count` was a tautology. Use set equality
         // on clientEventId so a misrouted ack self-heals instead of silently
@@ -82,7 +83,7 @@ public func reduce(
             .scheduleTimer(after: .seconds(5)),
         ])
 
-    case (.flushing(let inFlight), .sendFailed(let batch, let permanent, let retryAfter)):
+    case (.flushing(let inFlight, let attempt), .sendFailed(let batch, let permanent, let retryAfter)):
         // Same identity guard — a mismatched failed callback is stall-recovered.
         let inFlightIds = Set(inFlight.map(\.clientEventId))
         let failedIds = Set(batch.map(\.clientEventId))
@@ -96,11 +97,14 @@ public func reduce(
                 .batchDropped(reason: "permanent_client_error", count: batch.count),
             ])
         } else {
-            let attempt = 1
-            // Prefer the server's Retry-After hint when provided; otherwise
-            // use the local exp-backoff ladder. Attempt counter still advances
-            // so the ladder picks up at the right rung if the server stops
-            // sending hints on subsequent failures.
+            // `attempt` is the in-flight attempt number carried in .flushing.
+            // Delay after the nth failure = computeBackoff(attempt: n); the
+            // next retry (scheduled by .backoff + .backoffExpired) runs as
+            // attempt n+1. This is what makes the 1→2→4→…→60 ladder actually
+            // climb across the full flush/backoff round-trip. Server-supplied
+            // Retry-After, when present, overrides the ladder for this one
+            // wait; the attempt number still advances so subsequent failures
+            // continue at the correct rung.
             let delay = retryAfter ?? computeBackoff(attempt: attempt)
             return (.backoff(attempt: attempt, pendingBatch: batch),
                     [.scheduleTimer(after: delay)])
@@ -119,29 +123,30 @@ public func reduce(
         return (state, [])
 
     // MARK: — backoff
-    case (.backoff(_, let batch), .backoffExpired):
-        return (.flushing(batch: batch), [.httpPost(batch: batch)])
-    case (.backoff(let n, let b), .sendFailed(_, permanent: false, let retryAfter)):
-        let next = n + 1
-        // Retry-After from the server, if present, wins over the ladder for
-        // this attempt. See the .flushing + .sendFailed branch for rationale.
-        let delay = retryAfter ?? computeBackoff(attempt: next)
-        return (.backoff(attempt: next, pendingBatch: b),
-                [.scheduleTimer(after: delay)])
-    case (.backoff(_, let b), .sendFailed(_, permanent: true, _)):
-        // Drop the pending batch and reset; don't keep it queued indefinitely.
-        let ids = b.map(\.clientEventId)
-        return (.empty, [
-            .removeFromDisk(eventIds: ids),
-            .batchDropped(reason: "permanent_client_error", count: b.count),
-        ])
+    case (.backoff(let n, let batch), .backoffExpired):
+        // Advance to the (n+1)th attempt. `.flushing` carries this forward so
+        // `.flushing + .sendFailed` computes the correct next backoff.
+        return (.flushing(batch: batch, attempt: n + 1), [.httpPost(batch: batch)])
+    case (.backoff, .sendFailed):
+        // Unreachable in normal operation: `.sendFailed` is only emitted by
+        // the runner after an `.httpPost`, and `.httpPost` only runs from
+        // `.flushing`. The mailbox drain is serial, so the state is always
+        // `.flushing` when the callback lands — the `.flushing + .sendFailed`
+        // branch is authoritative. If a stale/duplicate callback ever does
+        // arrive here (future signal routing, reentrancy from effects we
+        // haven't foreseen), no-op rather than double-advance the counter.
+        return (state, [])
     case (.backoff, .track(let e)):
         return (state, [.persistToDisk(events: [e])])
-    case (.backoff(_, let batch), .flushRequested):
+    case (.backoff(let n, let batch), .flushRequested):
         // User-initiated flush overrides the backoff timer — cancel it and
         // retry the pending batch immediately. This is intentionally more
         // aggressive than appBackgrounded, which respects the backoff.
-        return (.flushing(batch: batch), [.cancelTimer, .httpPost(batch: batch)])
+        // Attempt advances: a user-forced retry is still the (n+1)th try,
+        // so on failure the ladder continues from the correct rung rather
+        // than resetting.
+        return (.flushing(batch: batch, attempt: n + 1),
+                [.cancelTimer, .httpPost(batch: batch)])
     case (.backoff, .timerFired),
          (.backoff, .batchFull),
          (.backoff, .sendOk),
