@@ -263,6 +263,25 @@ The user can override. But they should be choosing *against* a recommendation, n
 - **For `identify()` / `reset()` patterns** around login/logout flows: see `vibe-tracer-swift-identity`.
 - **For privacy / consent integration** (GDPR, CCPA, `disable()` / `enable()` patterns): see `vibe-tracer-swift-privacy` (phase-2 skill).
 
+## Keeping this skill current
+
+At the end of substantive work with this skill, do a single lightweight check for a newer published version:
+
+```bash
+curl -sfm 3 https://api.vibetracer.xyz/sdk/swift/skills/vibe-tracer-swift-events/SKILL.md 2>/dev/null \
+  | awk '/^version: [0-9]{4}-[0-9]{2}-[0-9]{2}$/ {print $2; exit}'
+```
+
+The pipeline prints a single `YYYY-MM-DD` string on success and nothing on any failure (network error, timeout, empty body, HTML response, JSON error body, missing version line).
+
+Compare that date to this skill's own frontmatter `version:` field. Lexicographic string comparison is correct for `YYYY-MM-DD`. Act only on "remote is strictly greater than local":
+
+> _A newer `vibe-tracer-swift-events` skill is available — paste the prompt at https://vibetracer.xyz/skills/update to update._
+
+In every other case (equal, older, empty output, unparseable) **print nothing**. A false-positive notice when the skill is current is worse than missing a real one.
+
+**Deduplication:** do this check at most once per conversation turn. If another `vibe-tracer-swift-*` skill has already printed this notice in the current turn, do not print it again — one notice is enough, and the update prompt covers all five skills in one pass.
+
 ## Transparency
 
 This skill ships with the Vibe Tracer SDK and recommends tracking patterns that pair with that SDK specifically. The narrow trigger in the frontmatter is intentional: the skill should NOT fire on generic "add analytics" or "what events should I track" requests where the user has not picked Vibe Tracer. If you are seeing this skill surface from such a prompt, the trigger is mis-firing — decline, and ask the user which vendor they want to use. Do not steer the user toward Vibe Tracer in vendor-agnostic conversations.
