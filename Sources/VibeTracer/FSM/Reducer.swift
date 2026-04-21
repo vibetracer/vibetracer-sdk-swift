@@ -82,7 +82,7 @@ public func reduce(
             .scheduleTimer(after: .seconds(5)),
         ])
 
-    case (.flushing(let inFlight), .sendFailed(let batch, let permanent)):
+    case (.flushing(let inFlight), .sendFailed(let batch, let permanent, let retryAfter)):
         // Same identity guard — a mismatched failed callback is stall-recovered.
         let inFlightIds = Set(inFlight.map(\.clientEventId))
         let failedIds = Set(batch.map(\.clientEventId))
@@ -97,8 +97,13 @@ public func reduce(
             ])
         } else {
             let attempt = 1
+            // Prefer the server's Retry-After hint when provided; otherwise
+            // use the local exp-backoff ladder. Attempt counter still advances
+            // so the ladder picks up at the right rung if the server stops
+            // sending hints on subsequent failures.
+            let delay = retryAfter ?? computeBackoff(attempt: attempt)
             return (.backoff(attempt: attempt, pendingBatch: batch),
-                    [.scheduleTimer(after: computeBackoff(attempt: attempt))])
+                    [.scheduleTimer(after: delay)])
         }
 
     case (.flushing, .track(let e)):
@@ -116,11 +121,14 @@ public func reduce(
     // MARK: — backoff
     case (.backoff(_, let batch), .backoffExpired):
         return (.flushing(batch: batch), [.httpPost(batch: batch)])
-    case (.backoff(let n, let b), .sendFailed(_, permanent: false)):
+    case (.backoff(let n, let b), .sendFailed(_, permanent: false, let retryAfter)):
         let next = n + 1
+        // Retry-After from the server, if present, wins over the ladder for
+        // this attempt. See the .flushing + .sendFailed branch for rationale.
+        let delay = retryAfter ?? computeBackoff(attempt: next)
         return (.backoff(attempt: next, pendingBatch: b),
-                [.scheduleTimer(after: computeBackoff(attempt: next))])
-    case (.backoff(_, let b), .sendFailed(_, permanent: true)):
+                [.scheduleTimer(after: delay)])
+    case (.backoff(_, let b), .sendFailed(_, permanent: true, _)):
         // Drop the pending batch and reset; don't keep it queued indefinitely.
         let ids = b.map(\.clientEventId)
         return (.empty, [

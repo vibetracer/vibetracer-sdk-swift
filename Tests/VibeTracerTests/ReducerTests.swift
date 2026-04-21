@@ -108,7 +108,7 @@ final class ReducerTests: XCTestCase {
     func test_flushing_plus_sendFailed_retryable_goesToBackoff_attempt1() {
         let batch = [makeEvent()]
         let (s, fx) = reduce(.flushing(batch: batch),
-                             .sendFailed(batch: batch, permanent: false),
+                             .sendFailed(batch: batch, permanent: false, retryAfter: nil),
                              batchLimit: 20)
         XCTAssertEqual(s, .backoff(attempt: 1, pendingBatch: batch))
         guard case .scheduleTimer(after: _) = fx.first else {
@@ -117,10 +117,23 @@ final class ReducerTests: XCTestCase {
         XCTAssertEqual(fx.count, 1)
     }
 
+    func test_flushing_plus_sendFailed_retryable_withRetryAfter_usesHint() {
+        // Server-provided Retry-After overrides the exp-backoff ladder for
+        // this attempt. The attempt counter still resets to 1 (this is the
+        // first failure of the in-flight batch) but the scheduleTimer uses
+        // the hint directly.
+        let batch = [makeEvent()]
+        let (s, fx) = reduce(.flushing(batch: batch),
+                             .sendFailed(batch: batch, permanent: false, retryAfter: .seconds(17)),
+                             batchLimit: 20)
+        XCTAssertEqual(s, .backoff(attempt: 1, pendingBatch: batch))
+        XCTAssertEqual(fx, [.scheduleTimer(after: .seconds(17))])
+    }
+
     func test_flushing_plus_sendFailed_permanent_dropsBatch_andReturnsToEmpty() {
         let batch = [makeEvent()]
         let (s, fx) = reduce(.flushing(batch: batch),
-                             .sendFailed(batch: batch, permanent: true),
+                             .sendFailed(batch: batch, permanent: true, retryAfter: nil),
                              batchLimit: 20)
         XCTAssertEqual(s, .empty)
         XCTAssertEqual(fx, [
@@ -167,13 +180,40 @@ final class ReducerTests: XCTestCase {
     func test_backoff_plus_sendFailed_permanent_dropsAndGoesToEmpty() {
         let batch = [makeEvent()]
         let (s, fx) = reduce(.backoff(attempt: 4, pendingBatch: batch),
-                             .sendFailed(batch: batch, permanent: true),
+                             .sendFailed(batch: batch, permanent: true, retryAfter: nil),
                              batchLimit: 20)
         XCTAssertEqual(s, .empty)
         XCTAssertEqual(fx, [
             .removeFromDisk(eventIds: [batch[0].clientEventId]),
             .batchDropped(reason: "permanent_client_error", count: 1),
         ])
+    }
+
+    func test_backoff_plus_sendFailed_retryable_advancesAttempt_andUsesLadder() {
+        // No server hint → exp-backoff ladder at attempt n+1. At attempt=3,
+        // ladder base is 4s; with jitter in [0.8, 1.2], result is in
+        // [3.2s, 4.8s]. Assert state transition and timer existence; the
+        // jitter range is covered by computeBackoff's own tests.
+        let batch = [makeEvent()]
+        let (s, fx) = reduce(.backoff(attempt: 2, pendingBatch: batch),
+                             .sendFailed(batch: batch, permanent: false, retryAfter: nil),
+                             batchLimit: 20)
+        XCTAssertEqual(s, .backoff(attempt: 3, pendingBatch: batch))
+        guard case .scheduleTimer(after: _) = fx.first, fx.count == 1 else {
+            XCTFail("expected exactly one scheduleTimer effect, got \(fx)")
+            return
+        }
+    }
+
+    func test_backoff_plus_sendFailed_retryable_withRetryAfter_overridesLadder() {
+        // Hint wins: attempt counter still advances, but the delay is taken
+        // from the server rather than computeBackoff(attempt: n+1).
+        let batch = [makeEvent()]
+        let (s, fx) = reduce(.backoff(attempt: 5, pendingBatch: batch),
+                             .sendFailed(batch: batch, permanent: false, retryAfter: .seconds(42)),
+                             batchLimit: 20)
+        XCTAssertEqual(s, .backoff(attempt: 6, pendingBatch: batch))
+        XCTAssertEqual(fx, [.scheduleTimer(after: .seconds(42))])
     }
 
     // MARK: - computeBackoff

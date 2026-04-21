@@ -5,7 +5,14 @@ import Foundation
 ///
 /// The `permanent` flag on `sendFailed` encodes the 400/422 vs. retryable split —
 /// computed at the network layer using `classify(status:)`, passed to the FSM
-/// as a bool so the reducer stays pure.
+/// as a bool so the reducer stays pure. The `retryAfter` field carries the
+/// server's `Retry-After` hint (integer delta-seconds, parsed and capped by
+/// `parseRetryAfter`); when present, the reducer uses it for the backoff
+/// scheduleTimer instead of the exp-backoff ladder. `nil` means "no usable
+/// hint, fall back to `computeBackoff(attempt:)`". The attempt counter still
+/// advances on every retry regardless of hint presence, so if the server
+/// sends one 429 with a hint and then stops, subsequent retries continue
+/// climbing the ladder from the correct rung.
 ///
 /// ### `appBackgrounded` vs. `flushRequested`
 ///
@@ -24,7 +31,7 @@ public enum QueueSignal: Sendable {
     case timerFired
     case batchFull
     case sendOk(batch: [AnalyticsEvent])
-    case sendFailed(batch: [AnalyticsEvent], permanent: Bool)
+    case sendFailed(batch: [AnalyticsEvent], permanent: Bool, retryAfter: Duration?)
     case backoffExpired
     case appBackgrounded
     case appTerminating

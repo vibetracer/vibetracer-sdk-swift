@@ -2,6 +2,28 @@ import Foundation
 
 /// One-file-per-event persistent queue. Atomic writes via temp + rename.
 /// Load discards files that fail to parse (partial-write recovery).
+///
+/// ### Data-loss contract
+///
+/// The queue is bounded at `maxEvents` (default 10,000). Events are evicted
+/// oldest-first on the next `persist` that would push the on-disk count over
+/// the cap. This is the SDK's ONLY realistic data-loss path in normal
+/// operation — every other failure mode (network error, 401/403, 408, 429,
+/// 5xx, transport failure, process death mid-send) keeps events on disk and
+/// retries indefinitely (see `FSM/Reducer.swift` retry matrix and
+/// `Effects/Network.swift` `classify(status:)`).
+///
+/// The cap triggers only under a narrow scenario: sustained backend outage
+/// **and** the host app continuing to emit events faster than the retry loop
+/// can drain. With 20-event batches, the 5-second flush timer, and a 60s
+/// backoff plateau, a device would need to emit >10k events while the backend
+/// has been unreachable for longer than the retry can recover from — plausible
+/// only during multi-hour outages on analytics-heavy apps.
+///
+/// If real-world telemetry ever shows the cap tripping, options (not yet
+/// taken) include: raising the cap, switching to a compressed/packed storage
+/// format to fit more events in the same footprint, or surfacing an eviction
+/// count to the server so we can observe the truncation.
 public actor DiskQueue {
     private let directory: URL
     private let maxEvents: Int

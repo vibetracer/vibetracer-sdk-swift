@@ -443,7 +443,7 @@ public actor VibeTracerCore {
 
     private func excludedIds(for signal: QueueSignal) -> Set<UUID> {
         switch signal {
-        case .sendOk(let batch), .sendFailed(let batch, _):
+        case .sendOk(let batch), .sendFailed(let batch, _, _):
             return Set(batch.map(\.clientEventId))
         default:
             return []
@@ -478,11 +478,15 @@ public actor VibeTracerCore {
             do {
                 try await network.post(batch)
                 enqueueInternal(.sendOk(batch: batch))
-            } catch NetworkError.httpStatus(_, let retryable) {
-                enqueueInternal(.sendFailed(batch: batch, permanent: !retryable))
+            } catch NetworkError.httpStatus(_, let retryable, let retryAfter) {
+                // Retry-After (when present) is honored only for retryable
+                // failures — a permanent 400/422 drops the batch, so a hint
+                // on that path would never be consulted. We still forward it
+                // for traceability.
+                enqueueInternal(.sendFailed(batch: batch, permanent: !retryable, retryAfter: retryAfter))
             } catch {
-                // Transport / connectivity — retryable.
-                enqueueInternal(.sendFailed(batch: batch, permanent: false))
+                // Transport / connectivity — retryable. No response = no header.
+                enqueueInternal(.sendFailed(batch: batch, permanent: false, retryAfter: nil))
             }
 
         case .persistToDisk(let events):
