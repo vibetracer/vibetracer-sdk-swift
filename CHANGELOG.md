@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.0.1] - 2026-04-21
+
+### Added
+
+- **Per-skill version field** (`version: YYYY-MM-DD` in each SKILL.md frontmatter)
+  so agents can detect out-of-date installs.
+- **End-of-run version check** in all 5 skills. If a newer version is available,
+  the agent prints a single italic notice pointing to
+  `https://vibetracer.xyz/skills/update`. On any failure (network, empty body,
+  HTML response, missing version line) the check stays silent — false positives
+  are strictly worse than missing notices.
+- **`/skills/update` page** with a copy-paste prompt that atomically upgrades all
+  installed `vibe-tracer-swift-*` skills. Validates frontmatter (`^---$`, exact
+  `^name: <expected>$`, `^version: YYYY-MM-DD$`) before any write; failed fetches
+  leave local files untouched.
+- **Cross-link** from the dashboard Install page to `/skills/update` as a backstop
+  for users whose in-agent notice never fires.
+
+### Notes
+
+- Existing v2.0.0 installs do NOT have the version-check section — they must be
+  updated once (via the prompt at `/skills/update`) to start receiving notices.
+  After that, updates are detected automatically at the end of the next relevant
+  session.
+
+### No SDK code changes
+
+The Swift package itself is unchanged from v2.0.0 / v1.1.3. Skills-pack and
+docs-distribution only.
+
 ## [2.0.0] - 2026-04-21
 
 ### Breaking — docs distribution only (no SDK API changes)
