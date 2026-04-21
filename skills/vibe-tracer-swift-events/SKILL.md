@@ -218,6 +218,24 @@ Ship in waves. If the user asks for a 20-event plan on day one, push back.
 
 **If the user has not shipped Wave 1 yet, do NOT write Wave 2 for them.** The temptation to deliver a "complete" plan is the same temptation that makes the plan useless.
 
+## Handoff: give the user a runnable try-it, not a pointer
+
+After you've written the `track()` calls, do not end with "next step: verify events land in the dashboard." That's agent-internal language — the user is a vibe coder and needs a concrete script.
+
+Name the specific events you just instrumented, the specific UI actions that trigger them, and the actual dashboard URL with the user's project slug filled in.
+
+```
+✅ "Run the app on your simulator or device. Tap **Create Project** once and
+   finish onboarding. Then open https://vibetracer.xyz/projects/<slug> —
+   you should see `project_created` and `onboarding_completed` in the Events
+   stream within 5–10s."
+
+❌ "Next step: verify events land in the dashboard (see vibe-tracer-swift-debug)."
+❌ "Build a DEBUG build and confirm events arrive."
+```
+
+If you don't know the project slug, ask — don't ship a `<slug>` placeholder. If `configure(debug: true)` is still in the code, remind the user to flip it to `false` first (debug mode logs locally and never sends; see `vibe-tracer-swift-debug`).
+
 ## Take a stance when you present options
 
 When more than one reasonable next action exists, state the one you'd take and why — in one sentence. Don't hand the user a neutral menu.
