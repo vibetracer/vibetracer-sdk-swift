@@ -1,73 +1,106 @@
 #!/usr/bin/env bash
-# Verify the "## Keeping this skill current" section is byte-identical
-# across all five skills/vibe-tracer-swift-*/SKILL.md files (modulo the
-# skill's own name).
+# Verify that every "canonical stanza" defined under scripts/.skill-templates/
+# is byte-identical (modulo `__NAME__` substitution) across all five
+# skills/vibe-tracer-swift-*/SKILL.md files.
 #
-# The section is intentionally duplicated per skill (so each skill can
-# self-check independently), but the content must stay in sync. This
-# hook catches silent drift — e.g. edits that fix the bash pipeline in
-# one skill but forget the other four.
+# Each `.md` file under .skill-templates/ is one stanza. The template's first
+# `## ` heading names the stanza; the body is everything from that heading up
+# to (but not including) the next level-2 heading, with `__NAME__` replaced by
+# the skill's own folder name.
 #
-# Canonical source: scripts/.skill-version-check.template.md, with
-# `__NAME__` substituted for each skill's folder name.
+# The hook catches silent drift — e.g. an edit that fixes the bash pipeline in
+# one skill but forgets the other four. Adding a new canonical stanza is a
+# matter of dropping a new `.md` file into `.skill-templates/`; this script
+# discovers and enforces it on the next run.
 #
-# This check runs against the *working tree*, not staged content — the
-# drift we care about is what would exist in the commit, and that's
-# equivalent to the working tree once staged files have been written
-# back by the editor. For partial-stage edge cases the check errs on
-# the strict side (any drift anywhere fails the commit).
+# This check runs against the *working tree*, not staged content — the drift
+# we care about is what would exist in the commit, equivalent to the working
+# tree once staged files have been written back by the editor. For
+# partial-stage edge cases the check errs strict (any drift fails the commit).
 
 set -euo pipefail
 
-template_path="scripts/.skill-version-check.template.md"
-if [ ! -f "$template_path" ]; then
-  echo "error: missing $template_path — cannot run skill-sync check." >&2
+templates_dir="scripts/.skill-templates"
+if [ ! -d "$templates_dir" ]; then
+  echo "error: missing $templates_dir — cannot run skill-sync check." >&2
   exit 1
 fi
 
-template="$(cat "$template_path")"
-fail=0
+shopt -s nullglob
+templates=("$templates_dir"/*.md)
+shopt -u nullglob
 
-for skill_dir in skills/vibe-tracer-swift-*/; do
-  name="$(basename "$skill_dir")"
-  file="$skill_dir/SKILL.md"
+if [ "${#templates[@]}" -eq 0 ]; then
+  echo "error: no canonical stanzas under $templates_dir/" >&2
+  exit 1
+fi
 
-  [ -f "$file" ] || {
-    echo "error: $file is missing." >&2
-    fail=1
-    continue
-  }
+# Extract the heading line (first `^## ` line) from a file. The remainder of
+# the section is the body — everything from the heading up to the next `^## `
+# line (the "next level-2 heading" boundary).
+extract_heading() {
+  awk '/^## / {print; exit}' "$1"
+}
 
-  expected="${template//__NAME__/$name}"
-
-  # Extract the section from the file: everything from the "## Keeping
-  # this skill current" heading up to (but not including) the next
-  # level-2 heading. awk's default record-at-a-time model works cleanly
-  # here with a start/stop flag.
-  actual="$(awk '
-    /^## Keeping this skill current$/ { capture=1; print; next }
+extract_section() {
+  # $1 = file path, $2 = the exact heading line to anchor on.
+  awk -v hdr="$2" '
+    $0 == hdr { capture=1; print; next }
     capture && /^## / { capture=0 }
     capture { print }
-  ' "$file")"
+  ' "$1"
+}
 
-  if [ -z "$actual" ]; then
-    echo "error: $file is missing the '## Keeping this skill current' section." >&2
-    echo "  Regenerate from $template_path (substitute __NAME__ with $name)." >&2
+# Trim trailing blank lines so trivial whitespace doesn't trigger spurious
+# drift reports. Used on both expected and actual.
+trim_trailing_blank() {
+  awk '{lines[NR]=$0} END {
+    for (last=NR; last>0; last--) if (lines[last] ~ /[^[:space:]]/) break
+    for (i=1; i<=last; i++) print lines[i]
+  }'
+}
+
+fail=0
+
+for template in "${templates[@]}"; do
+  template_name="$(basename "$template" .md)"
+  template_heading="$(extract_heading "$template")"
+
+  if [ -z "$template_heading" ]; then
+    echo "error: $template has no '## ' heading; cannot enforce." >&2
     fail=1
     continue
   fi
 
-  # Trim trailing blank lines from both so trivial whitespace doesn't
-  # trigger spurious drift reports.
-  actual="$(printf '%s\n' "$actual" | awk 'NF {p=1} p {print}' | awk '{lines[NR]=$0} END {for (i=1; i<=NR; i++) if (i<NR || lines[i]!="") print lines[i]}')"
-  expected="$(printf '%s\n' "$expected" | awk 'NF {p=1} p {print}' | awk '{lines[NR]=$0} END {for (i=1; i<=NR; i++) if (i<NR || lines[i]!="") print lines[i]}')"
+  template_body="$(cat "$template")"
 
-  if [ "$actual" != "$expected" ]; then
-    echo "error: $file 'Keeping this skill current' section drifted from $template_path." >&2
-    echo "  diff (expected vs actual, first lines):" >&2
-    diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") | head -20 | sed 's/^/    /' >&2
-    fail=1
-  fi
+  for skill_dir in skills/vibe-tracer-swift-*/; do
+    name="$(basename "$skill_dir")"
+    file="$skill_dir/SKILL.md"
+
+    [ -f "$file" ] || {
+      echo "error: $file is missing." >&2
+      fail=1
+      continue
+    }
+
+    expected="$(printf '%s' "$template_body" | sed "s/__NAME__/$name/g" | trim_trailing_blank)"
+    actual="$(extract_section "$file" "$template_heading" | trim_trailing_blank)"
+
+    if [ -z "$actual" ]; then
+      echo "error: $file is missing the '$template_heading' section." >&2
+      echo "  Add the canonical stanza from $template (substitute __NAME__ with $name)." >&2
+      fail=1
+      continue
+    fi
+
+    if [ "$actual" != "$expected" ]; then
+      echo "error: $file '$template_heading' section drifted from $template." >&2
+      echo "  diff (expected vs actual, first lines):" >&2
+      diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") | head -20 | sed 's/^/    /' >&2
+      fail=1
+    fi
+  done
 done
 
 exit $fail

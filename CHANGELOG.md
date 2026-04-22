@@ -1,5 +1,93 @@
 # Changelog
 
+> **Heading convention.** Semver releases (Swift package source changes) use
+> `## [X.Y.Z] - YYYY-MM-DD`. Skill-pack-only releases (no SDK source change —
+> just SKILL.md / scripts / docs) use `## [skill-pack-YYYY-MM-DD]`. The
+> `install-or-upgrade.sh` migration parser only matches the semver shape, so
+> skill-pack entries are correctly ignored when computing API migration deltas.
+
+## [skill-pack-2026-04-22] - 2026-04-22
+
+Skill-pack-only release. Swift package source unchanged; SPM pin stays `2.2.0`.
+This release fixes a high-severity install bug and adds layered verification so
+the same class of failure cannot recur silently.
+
+### Fixed
+
+- **`wire-xcode.rb` was silently dropping the API key.** The previous script
+  set `INFOPLIST_KEY_VibeTracerApiKey = $(VIBETRACER_API_KEY)` on the target's
+  build settings, expecting Xcode's auto-Info.plist generator to promote it.
+  Xcode only promotes `INFOPLIST_KEY_*` for keys on Apple's recognized-keys
+  allowlist (`CFBundle*`, `NSCamera*`, `UILaunchScreen_*`, etc.) — custom keys
+  like `VibeTracerApiKey` are silently dropped. Result at runtime:
+  `Bundle.main.object(forInfoDictionaryKey: "VibeTracerApiKey")` returned
+  `nil`, `??` coalesced to `""`, `configure(apiKey: "")` had nothing to
+  authenticate with, every event was dropped client-side before the network.
+  Headless build succeeded; dashboard showed zero events. Hard to diagnose.
+
+  Fix: `wire-xcode.rb` now provisions a file-based `<Target>/Info.plist`
+  containing the key as the primary (only) path, sets `INFOPLIST_FILE` on
+  Debug + Release, leaves `GENERATE_INFOPLIST_FILE = YES` in place so Xcode
+  merges its auto-generated Apple keys on top. The stale `INFOPLIST_KEY_*`
+  setting is stripped during the same run.
+
+### Added
+
+- **`install-or-upgrade.sh`** — single entry point for first-time install,
+  in-place upgrade, broken-state remediation, and already-current short-
+  circuit. Replaces the previous direct `wire-xcode.rb` invocation in the
+  install skill's workflow. (Renamed from `upgrade.sh`; routes through the
+  same code paths internally.)
+- **Broken-state detection.** `install-or-upgrade.sh` detects projects bitten
+  by the silent-key-drop bug above (pbxproj has `INFOPLIST_KEY_VibeTracerApiKey`
+  but no `INFOPLIST_FILE`) and remediates automatically. Existing broken
+  installs heal on the next skill invocation.
+- **Agent-driven build verification** — every skill that mutates code or
+  config now invokes a `## Verifying the build` discipline (canonical stanza
+  duplicated across all five skills, kept in sync by
+  `scripts/check-skill-sync.sh`). Verification is agent-prose, not a script,
+  because xcodebuild availability and simulator preference vary per user. On
+  failure: agent diagnoses, attempts a fix in place, and escalates to the
+  user with specifics. **Never** runs destructive git operations
+  (`git checkout / stash / reset / clean`) to "undo" agent changes.
+- **SDK skill freshness preflight** — at the top of every skill invocation,
+  before any project work, the agent compares the local `version:` frontmatter
+  to the published one and aborts loud if local is older. Catches the class
+  of failure where a stale skill makes wrong decisions silently. Replaces the
+  previous end-of-turn notice as the authoritative gate; the end-of-turn
+  notice stays as an informational backstop.
+- **Skill-specific build callouts** in events / identity / debug / platform-
+  config. Each calls out where in its workflow a build verification fires
+  (events: per-screen batch; identity: post-login/logout edits; debug:
+  pre-symptom-tree; platform-config: post-entitlement / post-Info.plist).
+
+### Changed
+
+- `INFOPLIST_FILE` patching — when a user already has `INFOPLIST_FILE` set
+  (older project template, multi-target setups), `wire-xcode.rb` now patches
+  THAT existing file in place — preserving every other key — instead of
+  redirecting to a new path.
+- `scripts/check-skill-sync.sh` reworked to iterate every `.md` file under
+  `scripts/.skill-templates/`, enforcing each as a canonical stanza across
+  all five SKILL.md files. Drop a new template file, get sync enforcement on
+  the next pre-commit. The previous single-template implementation
+  (`scripts/.skill-version-check.template.md`) moves to
+  `scripts/.skill-templates/keeping-current.md`.
+
+### Breaking — API
+
+None. Swift package source is unchanged.
+
+### Notes
+
+- Existing successfully-installed projects (those whose key actually landed in
+  the built Info.plist via some other mechanism — older project templates with
+  pre-existing file-based plists, manual edits) are unaffected. The bug bit
+  modern Xcode templates (`GENERATE_INFOPLIST_FILE = YES`, no pre-existing
+  `<Target>/Info.plist`) — the audience for this SDK is solo creators using
+  exactly that template, so it bit ~all real users.
+- `version:` frontmatter on all five SKILL.md files bumped to `2026-04-22`.
+
 ## [2.2.0] - 2026-04-21
 
 ### Added
