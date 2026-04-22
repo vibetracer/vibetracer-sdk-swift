@@ -43,9 +43,12 @@ out of the box.
   process lifetime — so per-event cost is a dictionary merge, not a
   `Bundle` / `ProcessInfo` read.
 
+### Breaking — API
+
+None.
+
 ### Notes
 
-- No breaking API changes. Existing `track()` call sites are untouched.
 - `sdk-version` frontmatter in all 5 skills bumped to `2.2.0`.
 - Podspec bumped to match.
 
@@ -74,9 +77,12 @@ provide it. That produced variation in timer strategy, memory lifecycle, key
 scoping, thread safety, and cancellation — all of which should be the SDK's
 job to do correctly once.
 
+### Breaking — API
+
+None.
+
 ### Notes
 
-- No breaking API changes. Existing `track()` call sites are untouched.
 - `sdk-version` frontmatter in all 5 skills bumped to `2.1.0`.
 - Podspec bumped to match; `release.sh` auto-commits future podspec bumps so
   this stays in sync.
@@ -106,10 +112,10 @@ job to do correctly once.
   After that, updates are detected automatically at the end of the next relevant
   session.
 
-### No SDK code changes
+### Breaking — API
 
-The Swift package itself is unchanged from v2.0.0 / v1.1.3. Skills-pack and
-docs-distribution only.
+None. The Swift package itself is unchanged from v2.0.0 / v1.1.3 — skills-pack
+and docs-distribution only.
 
 ## [2.0.0] - 2026-04-21
 
@@ -132,10 +138,12 @@ docs-distribution only.
   - `vibe-tracer-swift-debug` — troubleshooting
   - `vibe-tracer-swift-platform-config` — ATS, macOS sandbox, Mac Catalyst
 
-### No SDK code changes
+### Breaking — API
 
-The Swift package itself is identical to v1.1.3. Only documentation distribution
-changed. App builds against `from: "1.1.0"` resolve to 2.0.0 automatically.
+None. The Swift package itself is identical to v1.1.3 — only documentation
+distribution changed. The "Breaking — docs distribution" above refers to the
+SKILL.md download URL, not the Swift API. App builds against `from: "1.1.0"`
+resolve to 2.0.0 automatically.
 
 ## [1.1.3] - 2026-04-21
 
