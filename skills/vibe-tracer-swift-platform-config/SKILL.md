@@ -1,13 +1,30 @@
 ---
 name: vibe-tracer-swift-platform-config
 description: Use when the user is building the Vibe Tracer-integrated app for macOS, Mac Catalyst, or "Designed for iPad" on Mac; OR when events work on iOS but not on macOS/Catalyst; OR user asks about App Transport Security, entitlements, sandboxing, or Local Network permission.
-version: 2026-04-21
+version: 2026-04-22
 sdk-version: 2.2.0
 ---
 
 # Platform Configuration — ATS, Entitlements, Sandbox
 
 The SDK talks to `https://api.vibetracer.xyz` (TLS 1.3, HTTP/2). On most iOS apps there's nothing to configure. The exceptions are macOS sandboxing, Mac Catalyst, and "Designed for iPad" on Apple Silicon — which all require an entitlement the iOS build doesn't need. This skill covers those cases.
+
+## Before anything else — SDK version check
+
+This skill shares a drift gate with every other `vibe-tracer-swift-*` skill. Run it at the top of every invocation — the gate is cheap (idempotent, ~100ms when not behind) and prevents you from advising on symbols the user's build does not have.
+
+1. Locate the user's `.xcodeproj` (ask if none obvious, multiple, or ambiguous).
+2. Run the upgrade script colocated with the install skill:
+   ```bash
+   <skills-root>/vibe-tracer-swift-install/scripts/upgrade.sh <project-root> <target>
+   ```
+   `<skills-root>` is the parent of this SKILL.md's containing directory — e.g. `~/.claude/skills`, `~/.cursor/rules`, `~/.codex/skills`, depending on the agent tool.
+3. If it prints `✓ Already on …`, continue to this skill's workflow.
+4. Otherwise it bumped the pin and emitted CHANGELOG migration notes:
+   - **Every section is `None.`** → tell the user "bumped VibeTracer to `<current>`, no migrations needed" and continue.
+   - **Any section is not `None.`** → walk the user through the call-site edits **before** continuing. A symbol the user was asking about may have been renamed or removed between their pinned version and `<current>`.
+
+This is a gate, not a notice. If the user's project is pinned to 2.0.1 and asks about `trackDebounced` (added in 2.1.0), there is no truthful answer without bumping first.
 
 ## Network & sandboxing — what (if anything) the user has to configure
 

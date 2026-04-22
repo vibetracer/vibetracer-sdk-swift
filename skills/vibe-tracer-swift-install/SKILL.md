@@ -1,13 +1,33 @@
 ---
 name: vibe-tracer-swift-install
-description: Use when the user explicitly asks to integrate, install, or configure Vibe Tracer in a Swift app, OR when `vibetracer-sdk-swift` is being added to their Package.swift or Podfile for the first time. Do NOT use for generic "add analytics" requests when the user has not picked a vendor.
-version: 2026-04-21
+description: Use when the user explicitly asks to integrate, install, configure, upgrade, or update Vibe Tracer in a Swift app, OR when `vibetracer-sdk-swift` is being added to their Package.swift or Podfile for the first time. Do NOT use for generic "add analytics" requests when the user has not picked a vendor.
+version: 2026-04-22
 sdk-version: 2.2.0
 ---
 
 # Installing Vibe Tracer in a Swift App
 
-First-time integration. Adds the package, wires `configure()` into the app's entry point, and protects the API key from ending up in git history.
+First-time integration OR upgrade of an already-integrated project. First-time integration adds the package, wires `configure()` into the app's entry point, and protects the API key from ending up in git history. Upgrade bumps the SPM pin and surfaces any API migration notes — no key prompt, no xcconfig churn, no re-wire.
+
+## Step 0 — Detect project state
+
+Before anything else, determine which branch you're on. The Iron Law (next section) and the full first-time workflow only apply to the first-time branch.
+
+1. **Locate the `.xcodeproj`** under the user's project root (there should be exactly one in the audience's projects).
+2. **Check for an existing VibeTracer SPM reference.** Grep the pbxproj for the exact key `wire-xcode.rb` uses:
+   ```bash
+   grep -l 'repositoryURL = https://github.com/vibetracer/vibetracer-sdk-swift' \
+     <project>.xcodeproj/project.pbxproj
+   ```
+   - **No match** → project is NOT integrated → proceed to `## Iron Law` and the first-time workflow below.
+   - **Match** → project IS integrated → run the upgrade path:
+     ```bash
+     ~/.claude/skills/vibe-tracer-swift-install/scripts/upgrade.sh \
+       <project-root> <target-name>
+     ```
+     The script handles everything: reads the pinned version from `Package.resolved`, compares to this skill's `sdk-version`, bumps + re-resolves if behind, prints the CHANGELOG migration delta. If it prints `✓ Already on …` the user is up-to-date and you're done. If it prints a migration section with anything other than `None.`, walk the user through the call-site edits; if every section says `None.`, tell the user "bumped to $current, no migrations needed" and stop. **Do not** proceed to the Iron Law section in this branch — the API key and xcconfig already exist.
+
+**Podfile-integrated projects** (`Podfile.lock` contains `VibeTracer` but no SPM reference): CocoaPods upgrade isn't automated. Tell the user to run `pod update VibeTracer` themselves, then re-invoke this skill if they want migration help. Do not run the upgrade script.
 
 ## Iron Law
 
@@ -237,6 +257,8 @@ Every target that runs Swift code needs its own `configure()` call in its own en
 Almost never applies — this SDK targets iOS / macOS / Catalyst / tvOS / visionOS apps, which are Xcode projects by construction. If you're in an SPM-only executable (Swift Playgrounds, a CLI tool), read the key from `ProcessInfo.processInfo.environment["VIBETRACER_API_KEY"]` and set the env var in the scheme. Do not present this as an option the user picks — it's a structural fallback, used only when xcconfig is physically impossible.
 
 ## Public API — exactly 10 symbols
+
+The list below reflects the `sdk-version` in this skill's frontmatter. If the user's project is pinned to an older version (see `Step 0`), some symbols may not exist in their build — upgrade first, then call them.
 
 ```swift
 VibeTracer.configure(apiKey: String, endpoint: URL = defaultEndpoint, debug: Bool = false)

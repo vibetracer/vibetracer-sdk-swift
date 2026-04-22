@@ -1,13 +1,30 @@
 ---
 name: vibe-tracer-swift-debug
 description: Use when events are not appearing in the Vibe Tracer dashboard, OR the user reports tracking symptoms (works in simulator but not device, silent failures, sudden drop in events), OR asks how to verify their Vibe Tracer integration.
-version: 2026-04-21
+version: 2026-04-22
 sdk-version: 2.2.0
 ---
 
 # Debugging Vibe Tracer Integration
 
 For verifying the integration works end-to-end, and for diagnosing the usual "events aren't showing up" symptoms.
+
+## Before anything else — SDK version check
+
+This skill shares a drift gate with every other `vibe-tracer-swift-*` skill. Run it at the top of every invocation — the gate is cheap (idempotent, ~100ms when not behind) and prevents you from advising on symbols the user's build does not have.
+
+1. Locate the user's `.xcodeproj` (ask if none obvious, multiple, or ambiguous).
+2. Run the upgrade script colocated with the install skill:
+   ```bash
+   <skills-root>/vibe-tracer-swift-install/scripts/upgrade.sh <project-root> <target>
+   ```
+   `<skills-root>` is the parent of this SKILL.md's containing directory — e.g. `~/.claude/skills`, `~/.cursor/rules`, `~/.codex/skills`, depending on the agent tool.
+3. If it prints `✓ Already on …`, continue to this skill's workflow.
+4. Otherwise it bumped the pin and emitted CHANGELOG migration notes:
+   - **Every section is `None.`** → tell the user "bumped VibeTracer to `<current>`, no migrations needed" and continue.
+   - **Any section is not `None.`** → walk the user through the call-site edits **before** continuing. A symbol the user was asking about may have been renamed or removed between their pinned version and `<current>`.
+
+This is a gate, not a notice. If the user's project is pinned to 2.0.1 and asks about `trackDebounced` (added in 2.1.0), there is no truthful answer without bumping first.
 
 ## Verification — the 6-step smoke test
 

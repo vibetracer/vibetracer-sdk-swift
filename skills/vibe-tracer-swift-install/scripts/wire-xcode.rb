@@ -55,8 +55,13 @@ wanted_requirement = { 'kind' => 'upToNextMajorVersion', 'minimumVersion' => sdk
 
 if pkg_ref
   if pkg_ref.requirement != wanted_requirement
+    old_min = pkg_ref.requirement['minimumVersion']
     pkg_ref.requirement = wanted_requirement
-    changes << "Updated SPM requirement → upToNextMajorVersion #{sdk_version}"
+    if old_min && old_min != sdk_version
+      changes << "Updated SPM requirement: upToNextMajorVersion #{old_min} → #{sdk_version}"
+    else
+      changes << "Updated SPM requirement → upToNextMajorVersion #{sdk_version}"
+    end
   end
 else
   pkg_ref = project.new(Xcodeproj::Project::Object::XCRemoteSwiftPackageReference)
