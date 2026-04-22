@@ -212,14 +212,14 @@ for t in "${TARGETS[@]}"; do
       # globbed URLs because there's no directory listing on the CDN.
       if [ "$s" = "vibe-tracer-swift-install" ]; then
         mkdir -p "$t/$s/scripts"
-        for script in wire-xcode.rb upgrade.sh; do
+        for script in wire-xcode.rb install-or-upgrade.sh; do
           script_url="$BASE_URL/skills/$s/scripts/$script"
           [ -n "$VERSION" ] && script_url="$script_url?ref=$VERSION"
           curl -fsSL "$script_url" -o "$t/$s/scripts/$script"
           chmod +x "$t/$s/scripts/$script"
         done
 
-        # CHANGELOG.md ships with the install skill so upgrade.sh can read the
+        # CHANGELOG.md ships with the install skill so install-or-upgrade.sh can read the
         # migration delta offline. Lives alongside SKILL.md — not under scripts/ —
         # because it's content, not executable. Sibling skills (events, debug, etc.)
         # read it from this path when their drift gate fires.
