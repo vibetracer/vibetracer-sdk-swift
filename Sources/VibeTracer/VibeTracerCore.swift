@@ -54,6 +54,13 @@ public actor VibeTracerCore {
     private let clock: Clock
     private let lifecycle: LifecycleObserver
     private let connectivity: ConnectivityMonitor?
+    /// Holds a platform background-execution assertion across the background
+    /// flush so iOS doesn't suspend the process between a batch being committed
+    /// server-side and `removeFromDisk` clearing it locally. `nonisolated`
+    /// because the `onBackground` closure must take the assertion synchronously
+    /// on the main thread, outside the actor's executor. See
+    /// ``BackgroundTaskProvider``.
+    private nonisolated let backgroundTasks: BackgroundTaskProvider
     private let debug: Bool
     private let logger: Logger
     private let batchLimit: Int
@@ -118,7 +125,8 @@ public actor VibeTracerCore {
         logger: Logger,
         batchLimit: Int = 20,
         initiallyDisabled: Bool = false,
-        deviceContext: DeviceContext = .current()
+        deviceContext: DeviceContext = .current(),
+        backgroundTasks: BackgroundTaskProvider = NoopBackgroundTaskProvider()
     ) {
         self.deviceId = deviceId
         self.userIdStore = userIdStore
@@ -133,6 +141,7 @@ public actor VibeTracerCore {
         self.clock = clock
         self.lifecycle = lifecycle
         self.connectivity = connectivity
+        self.backgroundTasks = backgroundTasks
         self.debug = debug
         self.logger = logger
         self.batchLimit = batchLimit
@@ -171,7 +180,25 @@ public actor VibeTracerCore {
             Task { [weak self] in await self?.scheduleLifecycleWork { await $0.handleActivate() } }
         }
         lifecycle.onBackground = { [weak self] in
-            Task { [weak self] in await self?.scheduleLifecycleWork { await $0.handleBackground() } }
+            guard let self else { return }
+            // `didEnterBackground` is delivered synchronously on the main thread
+            // while the app is still foreground-eligible. Take the background-
+            // task assertion NOW, before the async hop below, so iOS holds
+            // suspension until the flush AND its on-disk cleanup finish. Skip
+            // this and a batch can be committed server-side (202) but suspended
+            // before `removeFromDisk` runs, then re-post next launch — the
+            // duplicate-ingest path. The assertion is a best-effort amplitude
+            // reducer, not a correctness guarantee (server dedup is that); on
+            // platforms without one the provider is a no-op and the flush still
+            // runs. Background flush deliberately bypasses `scheduleLifecycleWork`
+            // coalescing: a later foreground must not cancel an in-flight flush.
+            let provider = self.backgroundTasks
+            let token = provider.begin(name: "VibeTracer.flush.background")
+            Task { [weak self] in
+                await self?.handleBackground()   // enqueue .appBackgrounded → flush now
+                await self?._waitForIdle()       // wait until the queue drains
+                provider.end(token)              // release — always balanced
+            }
         }
         lifecycle.onTerminate = { [weak self] in
             Task { [weak self] in await self?.scheduleLifecycleWork { await $0.handleTerminate() } }

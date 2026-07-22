@@ -6,6 +6,44 @@
 > `install-or-upgrade.sh` migration parser only matches the semver shape, so
 > skill-pack entries are correctly ignored when computing API migration deltas.
 
+## [2.2.1] - 2026-07-22
+
+### Fixed
+
+- **Background flush now holds a background-task assertion, cutting duplicate
+  re-sends.** On iOS the delivery pipeline is `POST → server commits (202) →
+  .sendOk → removeFromDisk`. When the app was backgrounded, the flush ran on a
+  plain `URLSession` with no `UIApplication` background-task assertion, so iOS
+  could suspend the process *after* the server committed a batch but *before*
+  `removeFromDisk` cleared it locally. The surviving on-disk events re-posted on
+  the next launch — the same `clientEventId` ingested again, repeatedly across
+  launches (hours/days apart), most visibly for `$session_start` / `$session_end`
+  tracked right before backgrounding. `VibeTracerCore` now takes a background-
+  task assertion **synchronously** on `didEnterBackground` (before any async
+  hop, while the process is still foreground-eligible) and releases it only once
+  the queue has drained, so the on-disk cleanup completes before suspension.
+
+### Why
+
+Delivery is at-least-once by design; exactly-once is enforced server-side by the
+unique `(projectId, clientEventId)` index, not the client. This change does not
+alter that contract — it reduces the *amplitude* of at-least-once re-delivery by
+closing the common background-suspension window, so the SDK stops needlessly
+re-posting already-committed events on every launch. It is a best-effort
+optimization: crashes, OOM kills, and lost acks still re-send (and are still
+collapsed by the server index).
+
+### Contract
+
+- New injectable seam `BackgroundTaskProvider` (`begin(name:) -> BackgroundTaskToken`
+  / `end(_:)`). `VibeTracer.configure()` wires the real `UIKitBackgroundTaskProvider`
+  on UIKit platforms (iOS/tvOS/visionOS) and a `NoopBackgroundTaskProvider`
+  elsewhere (macOS/watchOS) — macOS apps aren't suspended the same way.
+- **App terminate is unchanged.** `.appTerminating` deliberately does not flush
+  (events are persisted and resumed next launch), so there is no committed-but-
+  uncleared window on terminate and therefore no assertion is needed there.
+- No public API change to `track` / `flush` / `identify` / lifecycle behavior.
+
 ## [skill-pack-2026-04-22] - 2026-04-22
 
 Skill-pack-only release. Swift package source unchanged; SPM pin stays `2.2.0`.

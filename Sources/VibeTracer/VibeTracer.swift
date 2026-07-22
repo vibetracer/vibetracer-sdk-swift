@@ -20,7 +20,7 @@ import WatchKit
 /// await VibeTracer.flush()
 /// VibeTracer.disable()   // CCPA/GDPR opt-out — persists across launches
 /// VibeTracer.enable()
-/// VibeTracer.version     // "2.2.0"
+/// VibeTracer.version     // "2.2.1"
 /// ```
 ///
 /// Every method is safe to call from any thread. `track()` is fire-and-forget:
@@ -100,6 +100,7 @@ public enum VibeTracer {
             session: urlSession
         )
         let lifecycle = makeLifecycleObserver()
+        let backgroundTasks = makeBackgroundTaskProvider()
         let connectivity = SystemConnectivityMonitor()
         let initiallyDisabled = defaults.bool(forKey: "com.vibetracer.disabled")
 
@@ -120,7 +121,8 @@ public enum VibeTracer {
             connectivity: connectivity,
             debug: debug,
             logger: logger,
-            initiallyDisabled: initiallyDisabled
+            initiallyDisabled: initiallyDisabled,
+            backgroundTasks: backgroundTasks
         )
         _core = newCore
         lock.unlock()
@@ -254,7 +256,7 @@ public enum VibeTracer {
 
     // MARK: - version
 
-    public static let version = "2.2.0"
+    public static let version = "2.2.1"
 
     // MARK: - internals
 
@@ -306,5 +308,17 @@ private func makeLifecycleObserver() -> LifecycleObserver {
     return WatchKitLifecycleObserver()
     #else
     return NoopLifecycleObserver()
+    #endif
+}
+
+/// Selects the background-task provider for the host platform. Only UIKit apps
+/// (iOS/tvOS/visionOS) get real background-execution assertions; macOS apps
+/// aren't suspended the same way and watchOS has no equivalent, so both use the
+/// no-op. Keeps the `#if canImport` cascade in one place.
+private func makeBackgroundTaskProvider() -> BackgroundTaskProvider {
+    #if canImport(UIKit) && !os(watchOS)
+    return UIKitBackgroundTaskProvider()
+    #else
+    return NoopBackgroundTaskProvider()
     #endif
 }

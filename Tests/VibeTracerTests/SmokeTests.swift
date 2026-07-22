@@ -1,8 +1,8 @@
-import XCTest
+import Testing
 @testable import VibeTracer
 
-final class SmokeTests: XCTestCase {
-    func testModuleImports() {
-        XCTAssertEqual(VibeTracer.version, "2.2.0")
+@Suite struct SmokeTests {
+    @Test func moduleImports() {
+        #expect(VibeTracer.version == "2.2.1")
     }
 }
