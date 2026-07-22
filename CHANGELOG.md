@@ -44,6 +44,13 @@ collapsed by the server index).
   uncleared window on terminate and therefore no assertion is needed there.
 - No public API change to `track` / `flush` / `identify` / lifecycle behavior.
 
+## [skill-pack-2026-07-22] - 2026-07-22
+
+Skill-pack-only release accompanying SDK **2.2.1**. Bumps `sdk-version` in all
+five `skills/vibe-tracer-swift-*/SKILL.md` files from `2.2.0` to `2.2.1` so
+skill-driven installs and the drift-detection preflight target the release that
+holds the background-flush assertion fix. No skill body / stanza changes.
+
 ## [skill-pack-2026-04-22] - 2026-04-22
 
 Skill-pack-only release. Swift package source unchanged; SPM pin stays `2.2.0`.
